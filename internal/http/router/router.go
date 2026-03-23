@@ -9,7 +9,14 @@ import (
 	"buhpro/internal/http/handlers/system"
 	"buhpro/internal/http/middleware"
 	authmodule "buhpro/internal/modules/auth"
+	coursesmodule "buhpro/internal/modules/courses"
+	devpaymentsmodule "buhpro/internal/modules/devpayments"
+	ordersmodule "buhpro/internal/modules/orders"
 	profilemodule "buhpro/internal/modules/profile"
+	ratingsmodule "buhpro/internal/modules/ratingsanctions"
+	responsesmodule "buhpro/internal/modules/responses"
+	reviewsmodule "buhpro/internal/modules/reviews"
+	selectionmodule "buhpro/internal/modules/selection"
 	"buhpro/internal/platform/metrics"
 
 	"github.com/gin-contrib/cors"
@@ -17,13 +24,20 @@ import (
 )
 
 type Deps struct {
-	Config         config.Config
-	Logger         *slog.Logger
-	SystemHandlers *system.Handler
-	JWTManager     *auth.JWTManager
-	AuthHandler    *authmodule.Handler
-	ProfileHandler *profilemodule.Handler
-	Metrics        *metrics.Metrics
+	Config             config.Config
+	Logger             *slog.Logger
+	SystemHandlers     *system.Handler
+	JWTManager         *auth.JWTManager
+	AuthHandler        *authmodule.Handler
+	ProfileHandler     *profilemodule.Handler
+	OrdersHandler      *ordersmodule.Handler
+	ResponsesHandler   *responsesmodule.Handler
+	DevPaymentsHandler *devpaymentsmodule.Handler
+	SelectionHandler   *selectionmodule.Handler
+	ReviewsHandler     *reviewsmodule.Handler
+	RatingHandler      *ratingsmodule.Handler
+	CoursesHandler     *coursesmodule.Handler
+	Metrics            *metrics.Metrics
 }
 
 func New(deps Deps) *gin.Engine {
@@ -68,6 +82,96 @@ func New(deps Deps) *gin.Engine {
 		profileGroup.Use(middleware.RequireAuth(deps.JWTManager))
 		profileGroup.GET("", deps.ProfileHandler.Get)
 		profileGroup.PATCH("", deps.ProfileHandler.Patch)
+
+		ordersGroup := v1.Group("/orders")
+		ordersGroup.Use(middleware.OptionalAuth(deps.JWTManager))
+		ordersGroup.GET("", deps.OrdersHandler.ListPublic)
+		ordersGroup.GET("/:id", deps.OrdersHandler.GetByID)
+
+		myOrdersGroup := ordersGroup.Group("/my")
+		myOrdersGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("client"))
+		myOrdersGroup.GET("", deps.OrdersHandler.ListMy)
+		myOrdersGroup.GET("/:id", deps.OrdersHandler.GetMyByID)
+		myOrdersGroup.PATCH("/:id", deps.OrdersHandler.UpdateMyByID)
+		myOrdersGroup.DELETE("/:id", deps.OrdersHandler.DeleteMyByID)
+		myOrdersGroup.POST("/:id/submit", deps.OrdersHandler.Submit)
+		myOrdersGroup.POST("/:id/cancel", deps.OrdersHandler.Cancel)
+
+		clientOrdersGroup := ordersGroup.Group("")
+		clientOrdersGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("client"))
+		clientOrdersGroup.POST("", deps.OrdersHandler.Create)
+		orderResponsesGroup := ordersGroup.Group("/:id/responses")
+		orderResponsesGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor"))
+		orderResponsesGroup.POST("", deps.ResponsesHandler.Create)
+		orderResponsesGroup.GET("/my", deps.ResponsesHandler.ListOrderMy)
+		orderResponsesGroup.GET("/my/:responseId", deps.ResponsesHandler.GetOrderMyByID)
+		orderResponsesGroup.PATCH("/my/:responseId", deps.ResponsesHandler.UpdateOrderMyByID)
+		orderResponsesGroup.DELETE("/my/:responseId", deps.ResponsesHandler.DeleteOrderMyByID)
+		orderResponsesGroup.POST("/my/:responseId/submit", deps.ResponsesHandler.Submit)
+		orderResponsesGroup.POST("/my/:responseId/cancel", deps.ResponsesHandler.Cancel)
+
+		myResponsesGroup := v1.Group("/my/responses")
+		myResponsesGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor", "admin"))
+		myResponsesGroup.GET("", deps.ResponsesHandler.ListMy)
+		myResponsesGroup.GET("/:id", deps.ResponsesHandler.GetMyByID)
+
+		clientResponsesGroup := v1.Group("/client/orders/:id/responses")
+		clientResponsesGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("client", "admin"))
+		clientResponsesGroup.GET("", deps.ResponsesHandler.ListClientOrder)
+		clientResponsesGroup.GET("/:responseId", deps.ResponsesHandler.GetClientOrderByID)
+		devPaymentsGroup := v1.Group("/dev/payments")
+		devPaymentsGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
+		devPaymentsGroup.POST("/:transactionId/confirm", deps.DevPaymentsHandler.Confirm)
+		devPaymentsGroup.POST("/:transactionId/fail", deps.DevPaymentsHandler.Fail)
+		clientOrderLifecycle := v1.Group("/client/orders/:id")
+		clientOrderLifecycle.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("client", "admin"))
+		clientOrderLifecycle.POST("/select-response/:responseId", deps.SelectionHandler.SelectResponse)
+		clientOrderLifecycle.GET("/selection", deps.SelectionHandler.GetSelection)
+		clientOrderLifecycle.POST("/complete", deps.SelectionHandler.Complete)
+		clientOrderLifecycle.POST("/reopen", deps.SelectionHandler.Reopen)
+		clientOrderLifecycle.POST("/review", deps.ReviewsHandler.Create)
+		clientOrderLifecycle.GET("/review", deps.ReviewsHandler.GetByOrder)
+
+		v1.GET("/executors/:executorId/reviews", deps.ReviewsHandler.ListExecutor)
+		v1.GET("/executors/:executorId/rating", deps.RatingHandler.GetRating)
+
+		mySanctions := v1.Group("/my/sanctions")
+		mySanctions.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor", "admin"))
+		mySanctions.GET("", deps.RatingHandler.MySanctions)
+
+		adminSanctions := v1.Group("/admin/sanctions")
+		adminSanctions.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
+		adminSanctions.GET("", deps.RatingHandler.AdminSanctions)
+		adminSanctions.GET("/:id", deps.RatingHandler.AdminSanctionByID)
+		adminSanctions.POST("/:id/lift", deps.RatingHandler.Lift)
+
+		coachCourses := v1.Group("/coach/courses")
+		coachCourses.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("coach", "admin"))
+		coachCourses.POST("", deps.CoursesHandler.CreateCourse)
+		coachCourses.PATCH("/:id", deps.CoursesHandler.PatchCourse)
+		coachCourses.GET("/:id", deps.CoursesHandler.GetCoachCourse)
+		coachCourses.GET("", deps.CoursesHandler.ListCoachCourses)
+		coachCourses.POST("/:id/publish", deps.CoursesHandler.PublishCourse)
+		coachCourses.POST("/:id/archive", deps.CoursesHandler.ArchiveCourse)
+		coachCourses.POST("/:id/materials", deps.CoursesHandler.CreateMaterial)
+		coachCourses.PATCH("/:id/materials/:materialId", deps.CoursesHandler.PatchMaterial)
+		coachCourses.DELETE("/:id/materials/:materialId", deps.CoursesHandler.DeleteMaterial)
+
+		coursesCatalog := v1.Group("/courses")
+		coursesCatalog.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor", "coach", "admin"))
+		coursesCatalog.GET("", deps.CoursesHandler.ListCourses)
+		coursesCatalog.GET("/:id", deps.CoursesHandler.GetCourse)
+
+		adminCourseAssignments := v1.Group("/admin/course-assignments")
+		adminCourseAssignments.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
+		adminCourseAssignments.POST("", deps.CoursesHandler.CreateAssignment)
+		adminCourseAssignments.GET("", deps.CoursesHandler.ListAdminAssignments)
+
+		myCourseAssignments := v1.Group("/my/course-assignments")
+		myCourseAssignments.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor"))
+		myCourseAssignments.GET("", deps.CoursesHandler.ListMyAssignments)
+		myCourseAssignments.GET("/:id", deps.CoursesHandler.GetMyAssignment)
+		myCourseAssignments.POST("/:id/mark-completed", deps.CoursesHandler.MarkCompleted)
 	}
 
 	return r
