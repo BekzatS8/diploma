@@ -16,7 +16,14 @@ import (
 	"buhpro/internal/http/handlers/system"
 	"buhpro/internal/http/router"
 	authmodule "buhpro/internal/modules/auth"
+	coursesmodule "buhpro/internal/modules/courses"
+	devpaymentsmodule "buhpro/internal/modules/devpayments"
+	ordersmodule "buhpro/internal/modules/orders"
 	profilemodule "buhpro/internal/modules/profile"
+	ratingsmodule "buhpro/internal/modules/ratingsanctions"
+	responsesmodule "buhpro/internal/modules/responses"
+	reviewsmodule "buhpro/internal/modules/reviews"
+	selectionmodule "buhpro/internal/modules/selection"
 	"buhpro/internal/platform/db"
 	"buhpro/internal/platform/metrics"
 	"buhpro/internal/platform/payments"
@@ -66,12 +73,30 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	)
 
 	_ = storage.NewMock()
-	_ = payments.NewMock()
+	paymentProvider := payments.NewMock()
 
 	authRepo := authmodule.NewRepository(dbPool)
 	authService := authmodule.NewService(authRepo, jwtManager)
 	profileRepo := profilemodule.NewRepository(dbPool)
 	profileService := profilemodule.NewService(profileRepo)
+	ordersRepo := ordersmodule.NewRepository(dbPool)
+	ordersService := ordersmodule.NewService(ordersRepo, paymentProvider, cfg.Payments.Provider, cfg.Orders.PostingFee, cfg.Orders.DefaultCurrency)
+	responsesRepo := responsesmodule.NewRepository(dbPool)
+	ratingRepo := ratingsmodule.NewRepository(dbPool, ratingsmodule.RepositoryOptions{
+		AutoAssignCourseOnLowRating: cfg.Sanctions.AutoAssignCourseOnLowRating,
+		DefaultLowRatingCourseID:    cfg.Sanctions.DefaultLowRatingCourseID,
+	})
+	ratingService := ratingsmodule.NewService(ratingRepo)
+	responsesService := responsesmodule.NewService(responsesRepo, paymentProvider, cfg.Payments.Provider, cfg.Orders.ResponseSubmissionFee, cfg.Orders.DefaultCurrency, ratingService)
+	devPaymentsRepo := devpaymentsmodule.NewRepository(dbPool)
+	devEndpointsEnabled := cfg.App.Env != "production" && cfg.Dev.EnablePaymentEndpoints
+	devPaymentsService := devpaymentsmodule.NewService(devPaymentsRepo, devEndpointsEnabled)
+	selectionRepo := selectionmodule.NewRepository(dbPool)
+	selectionService := selectionmodule.NewService(selectionRepo)
+	reviewsRepo := reviewsmodule.NewRepository(dbPool)
+	reviewsService := reviewsmodule.NewService(reviewsRepo, dbPool, ratingService)
+	coursesRepo := coursesmodule.NewRepository(dbPool)
+	coursesService := coursesmodule.NewService(coursesRepo)
 
 	if cfg.Bootstrap.EnableAdmin {
 		if err := authService.BootstrapAdmin(startupCtx, cfg.Bootstrap.AdminEmail, cfg.Bootstrap.AdminPassword); err != nil {
@@ -82,18 +107,32 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 
 	authHandler := authmodule.NewHandler(authService, profileService)
 	profileHandler := profilemodule.NewHandler(profileService)
+	ordersHandler := ordersmodule.NewHandler(ordersService)
+	responsesHandler := responsesmodule.NewHandler(responsesService)
+	devPaymentsHandler := devpaymentsmodule.NewHandler(devPaymentsService)
+	selectionHandler := selectionmodule.NewHandler(selectionService)
+	reviewsHandler := reviewsmodule.NewHandler(reviewsService)
+	ratingHandler := ratingsmodule.NewHandler(ratingService)
+	coursesHandler := coursesmodule.NewHandler(coursesService)
 
 	metricsCollector := metrics.New()
 	systemHandler := system.NewHandler(&readinessChecker{dbPool: dbPool, healthCheck: cfg.DB.HealthTimeout})
 
 	engine := router.New(router.Deps{
-		Config:         cfg,
-		Logger:         log,
-		SystemHandlers: systemHandler,
-		JWTManager:     jwtManager,
-		AuthHandler:    authHandler,
-		ProfileHandler: profileHandler,
-		Metrics:        metricsCollector,
+		Config:             cfg,
+		Logger:             log,
+		SystemHandlers:     systemHandler,
+		JWTManager:         jwtManager,
+		AuthHandler:        authHandler,
+		ProfileHandler:     profileHandler,
+		OrdersHandler:      ordersHandler,
+		ResponsesHandler:   responsesHandler,
+		DevPaymentsHandler: devPaymentsHandler,
+		SelectionHandler:   selectionHandler,
+		ReviewsHandler:     reviewsHandler,
+		RatingHandler:      ratingHandler,
+		CoursesHandler:     coursesHandler,
+		Metrics:            metricsCollector,
 	})
 
 	httpServer := &http.Server{

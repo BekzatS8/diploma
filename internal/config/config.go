@@ -15,7 +15,10 @@ type Config struct {
 	JWT       JWTConfig
 	Storage   StorageConfig
 	Payments  PaymentsConfig
+	Orders    OrdersConfig
 	Metrics   MetricsConfig
+	Dev       DevConfig
+	Sanctions SanctionsConfig
 	Bootstrap BootstrapConfig
 }
 
@@ -69,6 +72,12 @@ type PaymentsConfig struct {
 	SecretKey   string
 }
 
+type OrdersConfig struct {
+	PostingFee            float64
+	ResponseSubmissionFee float64
+	DefaultCurrency       string
+}
+
 type BootstrapConfig struct {
 	EnableAdmin   bool
 	AdminEmail    string
@@ -78,6 +87,15 @@ type BootstrapConfig struct {
 type MetricsConfig struct {
 	Enabled bool
 	Path    string
+}
+
+type DevConfig struct {
+	EnablePaymentEndpoints bool
+}
+
+type SanctionsConfig struct {
+	AutoAssignCourseOnLowRating bool
+	DefaultLowRatingCourseID    string
 }
 
 func Load() (Config, error) {
@@ -126,9 +144,21 @@ func Load() (Config, error) {
 			PublicKey:   getEnv("PAYMENTS_PUBLIC_KEY", ""),
 			SecretKey:   getEnv("PAYMENTS_SECRET_KEY", ""),
 		},
+		Orders: OrdersConfig{
+			PostingFee:            getEnvAsFloat("ORDER_POSTING_FEE", 1000),
+			ResponseSubmissionFee: getEnvAsFloat("RESPONSE_SUBMISSION_FEE", 500),
+			DefaultCurrency:       strings.ToUpper(getEnv("DEFAULT_CURRENCY", "KZT")),
+		},
 		Metrics: MetricsConfig{
 			Enabled: getEnvAsBool("METRICS_ENABLED", true),
 			Path:    getEnv("METRICS_PATH", "/metrics"),
+		},
+		Dev: DevConfig{
+			EnablePaymentEndpoints: getEnvAsBool("ENABLE_DEV_PAYMENT_ENDPOINTS", false),
+		},
+		Sanctions: SanctionsConfig{
+			AutoAssignCourseOnLowRating: getEnvAsBool("AUTO_ASSIGN_COURSE_ON_LOW_RATING", false),
+			DefaultLowRatingCourseID:    strings.TrimSpace(getEnv("DEFAULT_LOW_RATING_COURSE_ID", "")),
 		},
 		Bootstrap: BootstrapConfig{
 			EnableAdmin:   getEnvAsBool("BOOTSTRAP_ADMIN_ENABLED", false),
@@ -179,6 +209,15 @@ func getEnvAsBool(key string, def bool) bool {
 func getEnvAsInt(key string, def int) int {
 	value := getEnv(key, strconv.Itoa(def))
 	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return def
+	}
+	return parsed
+}
+
+func getEnvAsFloat(key string, def float64) float64 {
+	value := getEnv(key, fmt.Sprintf("%v", def))
+	parsed, err := strconv.ParseFloat(value, 64)
 	if err != nil {
 		return def
 	}
