@@ -43,6 +43,15 @@ type Sanction struct {
 	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 }
 
+type RecalculateResult struct {
+	SanctionCreated        bool
+	SanctionID             string
+	SanctionReason         string
+	AutoCourseAssigned     bool
+	AutoCourseAssignmentID string
+	AutoCourseID           string
+}
+
 func (r *Repository) HasActiveLowRating(ctx context.Context, executorID string) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow(ctx, `
@@ -72,40 +81,41 @@ func (r *Repository) GetRating(ctx context.Context, executorID string) (RatingIn
 	return info, nil
 }
 
-func (r *Repository) RecalculateAndApply(ctx context.Context, tx pgx.Tx, executorID string) error {
+func (r *Repository) RecalculateAndApply(ctx context.Context, tx pgx.Tx, executorID string) (RecalculateResult, error) {
+	result := RecalculateResult{}
 	var total int
 	var avgTotal float64
 	if err := tx.QueryRow(ctx, `SELECT COUNT(*), COALESCE(AVG(rating)::float8,0) FROM reviews WHERE executor_id=$1 AND deleted_at IS NULL`, executorID).Scan(&total, &avgTotal); err != nil {
-		return err
+		return result, err
 	}
 	var recentCount int
 	var avgRecent float64
 	if err := tx.QueryRow(ctx, `SELECT COUNT(*), COALESCE(AVG(rating)::float8,0) FROM (SELECT rating FROM reviews WHERE executor_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10) t`, executorID).Scan(&recentCount, &avgRecent); err != nil {
-		return err
+		return result, err
 	}
 
 	if _, err := tx.Exec(ctx, `UPDATE executor_profiles SET rating_avg=$2, rating_count=$3, updated_at=NOW() WHERE user_id=$1`, executorID, avgTotal, total); err != nil {
-		return err
+		return result, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO executor_rating_snapshots(executor_id, rating_avg, rating_count, snapshot_reason) VALUES($1,$2,$3,$4)`, executorID, avgRecent, recentCount, "review_created"); err != nil {
-		return err
+		return result, err
 	}
 
 	if recentCount == 0 || avgRecent >= 3.0 {
-		return nil
+		return result, nil
 	}
 
 	var activeExists bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sanctions WHERE executor_id=$1 AND status='active' AND reason IN ('low_rating_first','low_rating_repeat') AND (ends_at IS NULL OR ends_at>NOW()))`, executorID).Scan(&activeExists); err != nil {
-		return err
+		return result, err
 	}
 	if activeExists {
-		return nil
+		return result, nil
 	}
 
 	var hadBefore bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sanctions WHERE executor_id=$1 AND reason IN ('low_rating_first','low_rating_repeat'))`, executorID).Scan(&hadBefore); err != nil {
-		return err
+		return result, err
 	}
 	reason := "low_rating_first"
 	severity := 2
@@ -130,25 +140,31 @@ func (r *Repository) RecalculateAndApply(ctx context.Context, tx pgx.Tx, executo
 		))
 		RETURNING id
 	`, executorID, reason, severity, duration, r.autoAssignCourseOnLowRating, r.defaultLowRatingCourseID).Scan(&sanctionID); err != nil {
-		return err
+		return result, err
 	}
+	result.SanctionCreated = true
+	result.SanctionID = sanctionID
+	result.SanctionReason = reason
 
 	autoCreated := false
+	autoAssignmentID := ""
 	if r.autoAssignCourseOnLowRating && r.defaultLowRatingCourseID != "" {
 		var published bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM courses WHERE id=$1 AND deleted_at IS NULL AND status='published')`, r.defaultLowRatingCourseID).Scan(&published); err != nil {
-			return err
+			return result, err
 		}
 		if published {
-			cmd, err := tx.Exec(ctx, `
+			err := tx.QueryRow(ctx, `
 				INSERT INTO course_assignments(course_id, executor_id, sanction_id, assigned_by, reason, source, status)
 				VALUES($1,$2,$3,NULL,'Auto-assigned due to low rating sanction',$4,'assigned')
 				ON CONFLICT (course_id, executor_id) WHERE status IN ('assigned','in_progress') DO NOTHING
-			`, r.defaultLowRatingCourseID, executorID, sanctionID, assignmentSource)
-			if err != nil {
-				return err
+				RETURNING id
+			`, r.defaultLowRatingCourseID, executorID, sanctionID, assignmentSource).Scan(&autoAssignmentID)
+			if err == nil {
+				autoCreated = true
+			} else if err != pgx.ErrNoRows {
+				return result, err
 			}
-			autoCreated = cmd.RowsAffected() > 0
 		}
 	}
 
@@ -161,7 +177,13 @@ func (r *Repository) RecalculateAndApply(ctx context.Context, tx pgx.Tx, executo
 		)
 		WHERE id=$1
 	`, sanctionID, r.autoAssignCourseOnLowRating && r.defaultLowRatingCourseID != "", autoCreated, assignmentSource)
-	return err
+	if err != nil {
+		return result, err
+	}
+	result.AutoCourseAssigned = autoCreated
+	result.AutoCourseAssignmentID = autoAssignmentID
+	result.AutoCourseID = r.defaultLowRatingCourseID
+	return result, nil
 }
 
 func (r *Repository) ListMy(ctx context.Context, executorID string) ([]Sanction, error) {

@@ -3,6 +3,8 @@ package devpayments
 import (
 	"context"
 	"errors"
+
+	notifications "buhpro/internal/modules/notifications"
 )
 
 var (
@@ -10,19 +12,37 @@ var (
 )
 
 type Service struct {
-	repo    *Repository
-	enabled bool
+	repo     *Repository
+	enabled  bool
+	notifier *notifications.Service
 }
 
-func NewService(repo *Repository, enabled bool) *Service {
-	return &Service{repo: repo, enabled: enabled}
+func NewService(repo *Repository, enabled bool, notifier *notifications.Service) *Service {
+	return &Service{repo: repo, enabled: enabled, notifier: notifier}
 }
 
 func (s *Service) Confirm(ctx context.Context, transactionID string) error {
 	if !s.enabled {
 		return ErrDevDisabled
 	}
-	return s.repo.Confirm(ctx, transactionID)
+	result, err := s.repo.Confirm(ctx, transactionID)
+	if err != nil {
+		return err
+	}
+	if s.notifier != nil {
+		if result.OrderPublishedForClient != nil {
+			_, _ = s.notifier.EmitInApp(ctx, result.OrderPublishedForClient.ClientID, notifications.TypeOrderPublished, map[string]any{
+				"order_id": result.OrderPublishedForClient.OrderID,
+			})
+		}
+		if result.ResponseSubmittedClient != nil {
+			_, _ = s.notifier.EmitInApp(ctx, result.ResponseSubmittedClient.ClientID, notifications.TypeResponseSubmitted, map[string]any{
+				"order_id":    result.ResponseSubmittedClient.OrderID,
+				"response_id": result.ResponseSubmittedClient.ResponseID,
+			})
+		}
+	}
+	return nil
 }
 
 func (s *Service) Fail(ctx context.Context, transactionID string) error {

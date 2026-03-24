@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 
+	notifications "buhpro/internal/modules/notifications"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -15,9 +17,14 @@ var (
 	ErrConflict     = errors.New("conflict")
 )
 
-type Service struct{ repo *Repository }
+type Service struct {
+	repo     *Repository
+	notifier *notifications.Service
+}
 
-func NewService(repo *Repository) *Service { return &Service{repo: repo} }
+func NewService(repo *Repository, notifier *notifications.Service) *Service {
+	return &Service{repo: repo, notifier: notifier}
+}
 
 func (s *Service) CreateCourse(ctx context.Context, userID, role string, req CreateCourseRequest) (Course, error) {
 	if role != "coach" && role != "admin" {
@@ -237,6 +244,14 @@ func (s *Service) CreateAssignment(ctx context.Context, userID, role string, req
 		}
 		return CourseAssignment{}, err
 	}
+	if s.notifier != nil {
+		_, _ = s.notifier.EmitInApp(ctx, req.ExecutorID, notifications.TypeCourseAssigned, map[string]any{
+			"course_id":            item.CourseID,
+			"course_assignment_id": item.ID,
+			"sanction_id":          item.SanctionID,
+			"source":               source,
+		})
+	}
 	return item, nil
 }
 
@@ -290,6 +305,13 @@ func (s *Service) MarkCompleted(ctx context.Context, id, userID, role string) (C
 			return CourseAssignment{}, ErrNotFound
 		}
 		return CourseAssignment{}, err
+	}
+	if s.notifier != nil && item.AssignedBy != nil && *item.AssignedBy != "" {
+		_, _ = s.notifier.EmitInApp(ctx, *item.AssignedBy, notifications.TypeCourseCompleted, map[string]any{
+			"course_id":            item.CourseID,
+			"course_assignment_id": item.ID,
+			"executor_id":          item.ExecutorID,
+		})
 	}
 	return item, nil
 }
