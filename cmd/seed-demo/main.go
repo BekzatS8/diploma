@@ -162,10 +162,10 @@ func upsertCategories(ctx context.Context, tx pgx.Tx) error {
 
 func upsertCourse(ctx context.Context, tx pgx.Tx) error {
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO courses(id, coach_id, category_id, created_by, title, description, status, is_published)
-		VALUES($1,$2,$3,$2,'Demo Tax Compliance 101','Published demo course for sanctions follow-up','published',TRUE)
+		INSERT INTO courses(id, coach_id, category_id, title, description, is_published)
+		VALUES($1,$2,$3,'Demo Tax Compliance 101','Published demo course for sanctions follow-up',TRUE)
 		ON CONFLICT (id) DO UPDATE
-		SET title=EXCLUDED.title, description=EXCLUDED.description, status='published', is_published=TRUE, updated_at=NOW(), deleted_at=NULL
+		SET title=EXCLUDED.title, description=EXCLUDED.description, is_published=TRUE, updated_at=NOW(), deleted_at=NULL
 	`, courseID, demoCoachID, categoryTaxID); err != nil {
 		return err
 	}
