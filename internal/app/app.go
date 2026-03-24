@@ -16,8 +16,10 @@ import (
 	"buhpro/internal/http/handlers/system"
 	"buhpro/internal/http/router"
 	authmodule "buhpro/internal/modules/auth"
+	chatsmodule "buhpro/internal/modules/chats"
 	coursesmodule "buhpro/internal/modules/courses"
 	devpaymentsmodule "buhpro/internal/modules/devpayments"
+	notificationsmodule "buhpro/internal/modules/notifications"
 	ordersmodule "buhpro/internal/modules/orders"
 	profilemodule "buhpro/internal/modules/profile"
 	ratingsmodule "buhpro/internal/modules/ratingsanctions"
@@ -82,6 +84,8 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	ordersRepo := ordersmodule.NewRepository(dbPool)
 	ordersService := ordersmodule.NewService(ordersRepo, paymentProvider, cfg.Payments.Provider, cfg.Orders.PostingFee, cfg.Orders.DefaultCurrency)
 	responsesRepo := responsesmodule.NewRepository(dbPool)
+	notificationsRepo := notificationsmodule.NewRepository(dbPool)
+	notificationsService := notificationsmodule.NewService(notificationsRepo)
 	ratingRepo := ratingsmodule.NewRepository(dbPool, ratingsmodule.RepositoryOptions{
 		AutoAssignCourseOnLowRating: cfg.Sanctions.AutoAssignCourseOnLowRating,
 		DefaultLowRatingCourseID:    cfg.Sanctions.DefaultLowRatingCourseID,
@@ -90,13 +94,15 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	responsesService := responsesmodule.NewService(responsesRepo, paymentProvider, cfg.Payments.Provider, cfg.Orders.ResponseSubmissionFee, cfg.Orders.DefaultCurrency, ratingService)
 	devPaymentsRepo := devpaymentsmodule.NewRepository(dbPool)
 	devEndpointsEnabled := cfg.App.Env != "production" && cfg.Dev.EnablePaymentEndpoints
-	devPaymentsService := devpaymentsmodule.NewService(devPaymentsRepo, devEndpointsEnabled)
+	devPaymentsService := devpaymentsmodule.NewService(devPaymentsRepo, devEndpointsEnabled, notificationsService)
 	selectionRepo := selectionmodule.NewRepository(dbPool)
-	selectionService := selectionmodule.NewService(selectionRepo)
+	selectionService := selectionmodule.NewService(selectionRepo, notificationsService)
 	reviewsRepo := reviewsmodule.NewRepository(dbPool)
-	reviewsService := reviewsmodule.NewService(reviewsRepo, dbPool, ratingService)
+	reviewsService := reviewsmodule.NewService(reviewsRepo, dbPool, ratingService, notificationsService)
 	coursesRepo := coursesmodule.NewRepository(dbPool)
-	coursesService := coursesmodule.NewService(coursesRepo)
+	coursesService := coursesmodule.NewService(coursesRepo, notificationsService)
+	chatsRepo := chatsmodule.NewRepository(dbPool)
+	chatsService := chatsmodule.NewService(chatsRepo, notificationsService)
 
 	if cfg.Bootstrap.EnableAdmin {
 		if err := authService.BootstrapAdmin(startupCtx, cfg.Bootstrap.AdminEmail, cfg.Bootstrap.AdminPassword); err != nil {
@@ -114,25 +120,29 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	reviewsHandler := reviewsmodule.NewHandler(reviewsService)
 	ratingHandler := ratingsmodule.NewHandler(ratingService)
 	coursesHandler := coursesmodule.NewHandler(coursesService)
+	chatsHandler := chatsmodule.NewHandler(chatsService)
+	notificationsHandler := notificationsmodule.NewHandler(notificationsService)
 
 	metricsCollector := metrics.New()
 	systemHandler := system.NewHandler(&readinessChecker{dbPool: dbPool, healthCheck: cfg.DB.HealthTimeout})
 
 	engine := router.New(router.Deps{
-		Config:             cfg,
-		Logger:             log,
-		SystemHandlers:     systemHandler,
-		JWTManager:         jwtManager,
-		AuthHandler:        authHandler,
-		ProfileHandler:     profileHandler,
-		OrdersHandler:      ordersHandler,
-		ResponsesHandler:   responsesHandler,
-		DevPaymentsHandler: devPaymentsHandler,
-		SelectionHandler:   selectionHandler,
-		ReviewsHandler:     reviewsHandler,
-		RatingHandler:      ratingHandler,
-		CoursesHandler:     coursesHandler,
-		Metrics:            metricsCollector,
+		Config:               cfg,
+		Logger:               log,
+		SystemHandlers:       systemHandler,
+		JWTManager:           jwtManager,
+		AuthHandler:          authHandler,
+		ProfileHandler:       profileHandler,
+		OrdersHandler:        ordersHandler,
+		ResponsesHandler:     responsesHandler,
+		DevPaymentsHandler:   devPaymentsHandler,
+		SelectionHandler:     selectionHandler,
+		ReviewsHandler:       reviewsHandler,
+		RatingHandler:        ratingHandler,
+		CoursesHandler:       coursesHandler,
+		ChatsHandler:         chatsHandler,
+		NotificationsHandler: notificationsHandler,
+		Metrics:              metricsCollector,
 	})
 
 	httpServer := &http.Server{
