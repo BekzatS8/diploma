@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	notifications "buhpro/internal/modules/notifications"
 	ratings "buhpro/internal/modules/ratingsanctions"
 
 	"github.com/jackc/pgx/v5"
@@ -23,10 +24,11 @@ type Service struct {
 	repo          *Repository
 	db            *pgxpool.Pool
 	ratingService *ratings.Service
+	notifier      *notifications.Service
 }
 
-func NewService(repo *Repository, db *pgxpool.Pool, ratingService *ratings.Service) *Service {
-	return &Service{repo: repo, db: db, ratingService: ratingService}
+func NewService(repo *Repository, db *pgxpool.Pool, ratingService *ratings.Service, notifier *notifications.Service) *Service {
+	return &Service{repo: repo, db: db, ratingService: ratingService, notifier: notifier}
 }
 
 func (s *Service) Create(ctx context.Context, orderID, userID, role string, rating int, comment *string) (Review, error) {
@@ -69,11 +71,35 @@ func (s *Service) Create(ctx context.Context, orderID, userID, role string, rati
 		}
 		return Review{}, err
 	}
-	if err := s.ratingService.RecalculateAndApplyTx(ctx, tx, executorID); err != nil {
+	ratingResult, err := s.ratingService.RecalculateAndApplyTx(ctx, tx, executorID)
+	if err != nil {
 		return Review{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Review{}, err
+	}
+	if s.notifier != nil {
+		_, _ = s.notifier.EmitInApp(ctx, executorID, notifications.TypeReviewCreated, map[string]any{
+			"order_id":  orderID,
+			"review_id": item.ID,
+			"rating":    item.Rating,
+		})
+		if ratingResult.SanctionCreated {
+			_, _ = s.notifier.EmitInApp(ctx, executorID, notifications.TypeSanctionCreated, map[string]any{
+				"sanction_id": ratingResult.SanctionID,
+				"reason":      ratingResult.SanctionReason,
+				"order_id":    orderID,
+				"review_id":   item.ID,
+			})
+		}
+		if ratingResult.AutoCourseAssigned {
+			_, _ = s.notifier.EmitInApp(ctx, executorID, notifications.TypeCourseAssigned, map[string]any{
+				"course_id":            ratingResult.AutoCourseID,
+				"course_assignment_id": ratingResult.AutoCourseAssignmentID,
+				"sanction_id":          ratingResult.SanctionID,
+				"source":               "sanction_auto",
+			})
+		}
 	}
 	return item, nil
 }
