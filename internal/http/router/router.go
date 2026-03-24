@@ -9,8 +9,10 @@ import (
 	"buhpro/internal/http/handlers/system"
 	"buhpro/internal/http/middleware"
 	authmodule "buhpro/internal/modules/auth"
+	chatsmodule "buhpro/internal/modules/chats"
 	coursesmodule "buhpro/internal/modules/courses"
 	devpaymentsmodule "buhpro/internal/modules/devpayments"
+	notificationsmodule "buhpro/internal/modules/notifications"
 	ordersmodule "buhpro/internal/modules/orders"
 	profilemodule "buhpro/internal/modules/profile"
 	ratingsmodule "buhpro/internal/modules/ratingsanctions"
@@ -24,20 +26,22 @@ import (
 )
 
 type Deps struct {
-	Config             config.Config
-	Logger             *slog.Logger
-	SystemHandlers     *system.Handler
-	JWTManager         *auth.JWTManager
-	AuthHandler        *authmodule.Handler
-	ProfileHandler     *profilemodule.Handler
-	OrdersHandler      *ordersmodule.Handler
-	ResponsesHandler   *responsesmodule.Handler
-	DevPaymentsHandler *devpaymentsmodule.Handler
-	SelectionHandler   *selectionmodule.Handler
-	ReviewsHandler     *reviewsmodule.Handler
-	RatingHandler      *ratingsmodule.Handler
-	CoursesHandler     *coursesmodule.Handler
-	Metrics            *metrics.Metrics
+	Config               config.Config
+	Logger               *slog.Logger
+	SystemHandlers       *system.Handler
+	JWTManager           *auth.JWTManager
+	AuthHandler          *authmodule.Handler
+	ProfileHandler       *profilemodule.Handler
+	OrdersHandler        *ordersmodule.Handler
+	ResponsesHandler     *responsesmodule.Handler
+	DevPaymentsHandler   *devpaymentsmodule.Handler
+	SelectionHandler     *selectionmodule.Handler
+	ReviewsHandler       *reviewsmodule.Handler
+	RatingHandler        *ratingsmodule.Handler
+	CoursesHandler       *coursesmodule.Handler
+	ChatsHandler         *chatsmodule.Handler
+	NotificationsHandler *notificationsmodule.Handler
+	Metrics              *metrics.Metrics
 }
 
 func New(deps Deps) *gin.Engine {
@@ -172,6 +176,32 @@ func New(deps Deps) *gin.Engine {
 		myCourseAssignments.GET("", deps.CoursesHandler.ListMyAssignments)
 		myCourseAssignments.GET("/:id", deps.CoursesHandler.GetMyAssignment)
 		myCourseAssignments.POST("/:id/mark-completed", deps.CoursesHandler.MarkCompleted)
+
+		myNotifications := v1.Group("/my/notifications")
+		myNotifications.Use(middleware.RequireAuth(deps.JWTManager))
+		myNotifications.GET("", deps.NotificationsHandler.ListMy)
+		myNotifications.GET("/:id", deps.NotificationsHandler.GetMyByID)
+		myNotifications.POST("/:id/read", deps.NotificationsHandler.MarkRead)
+		myNotifications.POST("/read-all", deps.NotificationsHandler.MarkAllRead)
+
+		adminNotifications := v1.Group("/admin/notifications")
+		adminNotifications.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
+		adminNotifications.GET("", deps.NotificationsHandler.ListAdmin)
+		adminNotifications.GET("/:id", deps.NotificationsHandler.GetAdminByID)
+
+		myChats := v1.Group("/my/chats")
+		myChats.Use(middleware.RequireAuth(deps.JWTManager))
+		myChats.GET("", deps.ChatsHandler.ListMyChats)
+		myChats.GET("/:id", deps.ChatsHandler.GetMyChatByID)
+		myChats.GET("/:id/messages", deps.ChatsHandler.ListMyMessages)
+		myChats.POST("/:id/messages", deps.ChatsHandler.SendMyMessage)
+		myChats.POST("/:id/read", deps.ChatsHandler.MarkMyChatRead)
+
+		adminChats := v1.Group("/admin/chats")
+		adminChats.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
+		adminChats.GET("", deps.ChatsHandler.ListAdminChats)
+		adminChats.GET("/:id", deps.ChatsHandler.GetAdminChatByID)
+		adminChats.GET("/:id/messages", deps.ChatsHandler.ListAdminMessages)
 	}
 
 	return r

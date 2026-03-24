@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	notifications "buhpro/internal/modules/notifications"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -14,9 +16,14 @@ var (
 	ErrAlreadySelected = errors.New("already selected")
 )
 
-type Service struct{ repo *Repository }
+type Service struct {
+	repo     *Repository
+	notifier *notifications.Service
+}
 
-func NewService(repo *Repository) *Service { return &Service{repo: repo} }
+func NewService(repo *Repository, notifier *notifications.Service) *Service {
+	return &Service{repo: repo, notifier: notifier}
+}
 
 func (s *Service) SelectResponse(ctx context.Context, orderID, responseID, userID, role string) error {
 	ok, err := s.repo.IsOrderOwnerOrAdmin(ctx, orderID, userID, role)
@@ -29,11 +36,17 @@ func (s *Service) SelectResponse(ctx context.Context, orderID, responseID, userI
 	if !ok {
 		return ErrForbidden
 	}
-	err = s.repo.SelectResponse(ctx, orderID, responseID, userID)
+	selectedExecutorID, changed, err := s.repo.SelectResponse(ctx, orderID, responseID, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if changed && s.notifier != nil {
+		_, _ = s.notifier.EmitInApp(ctx, selectedExecutorID, notifications.TypeResponseSelected, map[string]any{"order_id": orderID, "response_id": responseID})
+	}
+	return nil
 }
 
 func (s *Service) GetSelection(ctx context.Context, orderID, userID, role string) (Selection, error) {
@@ -68,11 +81,17 @@ func (s *Service) Complete(ctx context.Context, orderID, userID, role string) er
 	if !ok {
 		return ErrForbidden
 	}
-	err = s.repo.Complete(ctx, orderID, userID)
+	selectedExecutorID, err := s.repo.Complete(ctx, orderID, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if selectedExecutorID != "" && s.notifier != nil {
+		_, _ = s.notifier.EmitInApp(ctx, selectedExecutorID, notifications.TypeOrderCompleted, map[string]any{"order_id": orderID})
+	}
+	return nil
 }
 
 func (s *Service) Reopen(ctx context.Context, orderID, userID, role string) error {

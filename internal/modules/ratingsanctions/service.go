@@ -20,7 +20,7 @@ func (s *Service) HasActiveResponseRestriction(ctx context.Context, executorID s
 	return s.repo.HasActiveLowRating(ctx, executorID)
 }
 
-func (s *Service) RecalculateAndApplyTx(ctx context.Context, tx pgx.Tx, executorID string) error {
+func (s *Service) RecalculateAndApplyTx(ctx context.Context, tx pgx.Tx, executorID string) (RecalculateResult, error) {
 	return s.repo.RecalculateAndApply(ctx, tx, executorID)
 }
 
