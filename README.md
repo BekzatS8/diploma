@@ -2,9 +2,41 @@
 
 Backend foundation + auth/profile + orders layer for BuhPro MVP.
 
+## Архитектура (кратко)
+
+- HTTP: Gin + middleware (`request_id`, logging, recovery, auth).
+- Service layer: бизнес-правила и access checks.
+- Repository layer: SQL-first (`pgxpool`), без смешивания SQL в handlers.
+- DB: PostgreSQL + migration files в `migrations/`.
+- Infra: dev payment finalization endpoints (admin + env-guarded), demo seed CLI (env-guarded).
+
+## API conventions
+
+- Error format: `{\"error\":{\"code\",\"message\",\"request_id\"}}`.
+- Pagination params: `page`, `page_size` (default page=1, page_size=20, capped in services).
+- List endpoints usually return envelope: `items`, `page`, `page_size`, `total`.
+- Access model:
+  - owner/participant-scoped endpoints under `my/*`,
+  - admin debug/read endpoints under `admin/*`.
+
+## Naming consistency snapshot
+
+- Payment object types: `order_posting`, `response_submission`.
+- Response lifecycle statuses: `draft`, `payment_pending`, `submitted`, `accepted`, `rejected`, `cancelled`.
+- Notification types use machine-readable snake_case (`order_published`, `response_selected`, `chat_message_received`, ...).
+- Sanction reasons/sources: `low_rating_first`, `low_rating_repeat`; assignment sources `manual_admin`, `sanction_low_rating_first`, `sanction_low_rating_repeat`.
+
+## Роли
+
+- `client`: заказы, выбор исполнителя, completion, review.
+- `executor`: responses, chat participant, assignments, sanctions/notifications read.
+- `coach`: courses/materials management.
+- `admin`: debug/read across domains + dev payment endpoints + bootstrap/seed tooling.
+
 ## Реализовано
 
 - Foundation: config, Gin router, middleware, health/ready/metrics, pgxpool, migrations.
+- MVP модули: auth/profile, orders, responses, dev-payments, selection+lifecycle, reviews, rating+sanctions, courses+assignments, notifications, REST chats.
 - Auth module:
   - `POST /api/v1/auth/register`
   - `POST /api/v1/auth/login`
@@ -155,9 +187,57 @@ Backend foundation + auth/profile + orders layer for BuhPro MVP.
   - optional auto-assignment when enabled by env flags (see below)
   - assignment is created only for published default course and deduplicated by active `(course_id, executor_id)` assignment.
 
+## Notifications foundation (MVP)
+
+- In-app notifications storage via `notifications` table (`channel=in_app` for current MVP delivery).
+- User endpoints:
+  - `GET /api/v1/my/notifications` (filters: `status`, `type`, `unread_only`, pagination)
+  - `GET /api/v1/my/notifications/:id`
+  - `POST /api/v1/my/notifications/:id/read`
+  - `POST /api/v1/my/notifications/read-all`
+- Admin read/debug endpoints:
+  - `GET /api/v1/admin/notifications` (filters: `user_id`, `type`, `status`, `channel`, pagination)
+  - `GET /api/v1/admin/notifications/:id`
+- `mark-read` / `mark-all-read` are idempotent and set `read_at` + `status=read` (with `sent_at` backfill if needed).
+- Notification events emitted in current flows:
+  - `order_published` (after dev payment confirm of order posting)
+  - `response_submitted` (after dev payment confirm of response submission)
+  - `response_selected` (after client selects executor response)
+  - `order_completed` (after client completes in-progress order)
+  - `review_created` (after client leaves review)
+  - `sanction_created` (when low-rating sanction is created during review recalculation)
+  - `course_assigned` (manual admin assignment + auto assignment from low-rating sanction)
+  - `course_completed` (admin-facing event when executor marks assignment completed and assignment has `assigned_by`)
+- Payloads are machine-readable and include only related identifiers (`order_id`, `response_id`, `review_id`, `sanction_id`, `course_id`, `course_assignment_id`, `executor_id`) plus limited contextual fields (for example sanction `reason`).
+- Realtime/ws, email/sms delivery, queues/workers and notification preferences are intentionally not implemented at this stage.
+
+## Chat foundation (MVP, REST only)
+
+- Чат создается автоматически в selection flow при `published -> in_progress` после выбора response:
+  - один чат на один `order` (`chats.order_id` unique),
+  - если чат уже есть, создание идемпотентно,
+  - участники: owner-client заказа + selected executor.
+- Доступ:
+  - `my/*` endpoints только для участников чата,
+  - `admin/*` endpoints только для чтения/debug.
+- Endpoints:
+  - user:
+    - `GET /api/v1/my/chats`
+    - `GET /api/v1/my/chats/:id`
+    - `GET /api/v1/my/chats/:id/messages`
+    - `POST /api/v1/my/chats/:id/messages`
+    - `POST /api/v1/my/chats/:id/read`
+  - admin:
+    - `GET /api/v1/admin/chats`
+    - `GET /api/v1/admin/chats/:id`
+    - `GET /api/v1/admin/chats/:id/messages`
+- Messages list ordering: `oldest-first` (`created_at ASC`) with pagination.
+- `mark read` обновляет `chat_participants.last_read_at` для текущего участника (idempotent participant-level read state, без per-message read receipts).
+- После отправки сообщения создается in-app notification второму участнику (`type=chat_message_received`, payload: `chat_id`, `order_id`, `message_id`).
+- На этом этапе не реализованы websocket/realtime, typing indicators, attachments/files, media messages, edit/delete workflow, chat moderation, history search, browser push.
+
 ## Что отложено
 
-- chat/notifications business logic
 - реальные payment callbacks/webhooks
 - automatic publish after successful payment
 - automatic response submit after payment callback
@@ -188,6 +268,9 @@ Payments/orders foundation:
 - `ENABLE_DEV_PAYMENT_ENDPOINTS` (default: `false`)
 - `AUTO_ASSIGN_COURSE_ON_LOW_RATING` (default: `false`)
 - `DEFAULT_LOW_RATING_COURSE_ID` (optional UUID course id)
+- `ENABLE_DEMO_SEED` (default: `false`, required for `seed-demo`)
+- `DEMO_USER_PASSWORD` (optional, default `DemoPass123`)
+- `DEMO_INCLUDE_SANCTION` (optional `true|false`, default false)
 
 ## Makefile
 
@@ -201,6 +284,7 @@ Payments/orders foundation:
 - `make compose-up`
 - `make compose-down`
 - `make bootstrap-admin`
+- `make seed-demo`
 
 ## Запуск (Linux/macOS)
 
@@ -239,6 +323,15 @@ Prometheus optional profile:
 ```bash
 docker compose --profile observability up -d
 ```
+
+## Demo readiness
+
+- Пошаговый сценарий e2e demo вынесен в `DEMO.md` (4 сценария с endpoint sequence, payload и expected transitions).
+- Рекомендуемый быстрый dev/demo цикл:
+  1. `make compose-up`
+  2. `make migrate-up`
+  3. `ENABLE_DEMO_SEED=true make seed-demo`
+  4. `ENABLE_DEV_PAYMENT_ENDPOINTS=true make run`
 
 ## Auth API examples
 
