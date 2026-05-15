@@ -8,6 +8,7 @@ import (
 	"buhpro/internal/config"
 	"buhpro/internal/http/handlers/system"
 	"buhpro/internal/http/middleware"
+	"buhpro/internal/http/swagger"
 	authmodule "buhpro/internal/modules/auth"
 	chatsmodule "buhpro/internal/modules/chats"
 	coursesmodule "buhpro/internal/modules/courses"
@@ -67,6 +68,7 @@ func New(deps Deps) *gin.Engine {
 
 	r.GET("/healthz", deps.SystemHandlers.Healthz)
 	r.GET("/readyz", deps.SystemHandlers.Readyz)
+	swagger.Register(r)
 
 	v1 := r.Group("/api/v1")
 	{
