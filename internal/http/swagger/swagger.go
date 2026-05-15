@@ -210,11 +210,20 @@ func components() map[string]any {
 
 func schemas() map[string]any {
 	return map[string]any{
-		"ErrorResponse": obj(req("error", ref("ErrorBody"))),
+		"ErrorResponse": obj(
+			req("success", boolProp("Always false for intercepted debug errors.")),
+			req("error", ref("ErrorBody")),
+			req("request_id", str("Request identifier from X-Request-ID.")),
+			req("timestamp", dateTime()),
+			req("path", str("Request path.")),
+			req("method", str("HTTP method.")),
+			req("status", intProp("HTTP status code.")),
+		),
 		"ErrorBody": obj(
-			req("code", str("Machine-readable error code.")),
-			req("message", str("Human-readable error message.")),
-			prop("request_id", str("Request identifier from X-Request-ID.")),
+			req("code", str("Machine-readable code, for example HTTP_500.")),
+			req("message", str("HTTP status text.")),
+			req("error_trace", str("Original intercepted response body or panic value.")),
+			req("stack_trace", str("runtime/debug.Stack output.")),
 		),
 		"StatusResponse":       obj(prop("status", str("Operation status."))),
 		"HealthResponse":       obj(prop("status", str("Service status."))),
