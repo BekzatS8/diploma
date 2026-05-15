@@ -15,6 +15,7 @@ import (
 	"buhpro/internal/config"
 	"buhpro/internal/http/handlers/system"
 	"buhpro/internal/http/router"
+	attachmentsmodule "buhpro/internal/modules/attachments"
 	authmodule "buhpro/internal/modules/auth"
 	chatsmodule "buhpro/internal/modules/chats"
 	coursesmodule "buhpro/internal/modules/courses"
@@ -26,6 +27,7 @@ import (
 	responsesmodule "buhpro/internal/modules/responses"
 	reviewsmodule "buhpro/internal/modules/reviews"
 	selectionmodule "buhpro/internal/modules/selection"
+	uploadsmodule "buhpro/internal/modules/uploads"
 	"buhpro/internal/platform/db"
 	"buhpro/internal/platform/metrics"
 	"buhpro/internal/platform/payments"
@@ -74,13 +76,18 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 		cfg.JWT.RefreshTTL,
 	)
 
-	_ = storage.NewMock()
+	storageProvider, err := storage.NewLocal(cfg.Storage.LocalPath, cfg.Storage.PublicBaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("init storage: %w", err)
+	}
 	paymentProvider := payments.NewMock()
 
 	authRepo := authmodule.NewRepository(dbPool)
 	authService := authmodule.NewService(authRepo, jwtManager)
+	uploadsRepo := uploadsmodule.NewRepository(dbPool)
+	uploadsService := uploadsmodule.NewService(uploadsRepo, storageProvider)
 	profileRepo := profilemodule.NewRepository(dbPool)
-	profileService := profilemodule.NewService(profileRepo)
+	profileService := profilemodule.NewService(profileRepo, uploadsService)
 	ordersRepo := ordersmodule.NewRepository(dbPool)
 	ordersService := ordersmodule.NewService(ordersRepo, paymentProvider, cfg.Payments.Provider, cfg.Orders.PostingFee, cfg.Orders.DefaultCurrency)
 	responsesRepo := responsesmodule.NewRepository(dbPool)
@@ -103,6 +110,8 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	coursesService := coursesmodule.NewService(coursesRepo, notificationsService)
 	chatsRepo := chatsmodule.NewRepository(dbPool)
 	chatsService := chatsmodule.NewService(chatsRepo, notificationsService)
+	attachmentsRepo := attachmentsmodule.NewRepository(dbPool)
+	attachmentsService := attachmentsmodule.NewService(attachmentsRepo, uploadsService)
 
 	if cfg.Bootstrap.EnableAdmin {
 		if err := authService.BootstrapAdmin(startupCtx, cfg.Bootstrap.AdminEmail, cfg.Bootstrap.AdminPassword); err != nil {
@@ -122,6 +131,8 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	coursesHandler := coursesmodule.NewHandler(coursesService)
 	chatsHandler := chatsmodule.NewHandler(chatsService)
 	notificationsHandler := notificationsmodule.NewHandler(notificationsService)
+	uploadsHandler := uploadsmodule.NewHandler(uploadsService)
+	attachmentsHandler := attachmentsmodule.NewHandler(attachmentsService)
 
 	metricsCollector := metrics.New()
 	systemHandler := system.NewHandler(&readinessChecker{dbPool: dbPool, healthCheck: cfg.DB.HealthTimeout})
@@ -142,6 +153,8 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 		CoursesHandler:       coursesHandler,
 		ChatsHandler:         chatsHandler,
 		NotificationsHandler: notificationsHandler,
+		UploadsHandler:       uploadsHandler,
+		AttachmentsHandler:   attachmentsHandler,
 		Metrics:              metricsCollector,
 	})
 

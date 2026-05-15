@@ -57,6 +57,8 @@ func Spec() map[string]any {
 			tag("System", "Health, readiness, metrics and ping endpoints."),
 			tag("Auth", "Registration, login, token refresh, logout and current user."),
 			tag("Profile", "Current role profile read/update."),
+			tag("Uploads", "Local file upload metadata and private owner file management."),
+			tag("Attachments", "Polymorphic one-to-many file links for domain entities."),
 			tag("Orders", "Client order creation, management and public feed."),
 			tag("Responses", "Executor paid responses and client response review."),
 			tag("Dev Payments", "Development-only payment confirmation/failure endpoints."),
@@ -90,6 +92,21 @@ func paths() map[string]any {
 			getOp("Profile", "Get current profile", "Returns the profile table matching the current user's role.", true, nil, nil, ok("ProfileResponse")),
 			patchOp("Profile", "Update current profile", "Partially updates the current role profile.", true, nil, body("UpdateProfileRequest"), ok("StatusResponse")),
 		),
+		"/api/v1/profile/avatar": pathItem(
+			patchOp("Profile", "Set profile avatar", "Links one uploaded file as the current role profile avatar.", true, nil, body("SetAvatarRequest"), ok("StatusResponse")),
+			deleteOp("Profile", "Clear profile avatar", "Removes the avatar link from the current role profile without deleting the uploaded file.", true, nil, nil, ok("StatusResponse")),
+		),
+
+		"/api/v1/files":      post("Uploads", "Upload files", "Uploads one or more files to local storage. Send multipart/form-data with repeated file fields.", true, nil, multipartFilesBody(), created("UploadListResponse")),
+		"/api/v1/files/{id}": pathItem(getOp("Uploads", "Get uploaded file metadata", "Returns upload metadata and public local URL.", false, []any{path("id", "string", "Upload UUID.")}, nil, ok("UploadView")), deleteOp("Uploads", "Delete uploaded file", "Deletes an owned upload record and local file; admin can delete any upload.", true, []any{path("id", "string", "Upload UUID.")}, nil, ok("StatusResponse"))),
+		"/api/v1/my/files":   get("Uploads", "My uploaded files", "Lists uploads owned by the authenticated user.", true, nil, nil, ok("UploadListResponse")),
+
+		"/api/v1/attachments": pathItem(
+			getOp("Attachments", "List attachments", "Lists files attached to a target entity by target_type and target_id.", false, []any{query("target_type", "string", true, "Attachment target type."), query("target_id", "string", true, "Target UUID.")}, nil, ok("AttachmentListResponse")),
+			postOp("Attachments", "Attach files", "Links existing uploaded files to one target entity. Owner must own uploads; admin can link any upload.", true, nil, body("AttachRequest"), created("AttachmentListResponse")),
+		),
+		"/api/v1/attachments/reorder": patchOp("Attachments", "Reorder attachments", "Rewrites sort_order by the provided attachment id order.", true, nil, body("ReorderAttachmentsRequest"), ok("StatusResponse")),
+		"/api/v1/attachments/{id}":    pathItem(deleteOp("Attachments", "Delete attachment link", "Deletes only the attachment link; the uploaded file remains in storage.", true, []any{path("id", "string", "Attachment UUID.")}, nil, ok("StatusResponse"))),
 
 		"/api/v1/orders": pathItem(
 			getOp("Orders", "Public orders feed", "Lists published, non-deleted orders with category, budget and text filters.", false, []any{
@@ -238,6 +255,40 @@ func schemas() map[string]any {
 		"User":                 obj(req("id", uuidStr()), req("email", str("Email.")), req("role", enumStr("client", "executor", "coach", "admin")), req("is_active", boolProp("Active flag.")), req("created_at", dateTime())),
 		"ProfileResponse":      freeObj("Role-specific profile payload."),
 		"UpdateProfileRequest": freeObj("Role-specific profile fields: company_name, phone, about, display_name, bio, years_experience, expertise."),
+		"SetAvatarRequest":     obj(req("upload_id", uuidStr())),
+
+		"UploadView": obj(
+			req("id", uuidStr()),
+			req("author_id", uuidStr()),
+			req("file_path", str("Storage key relative to local uploads root.")),
+			req("url", str("Public URL served by the backend.")),
+			req("original_name", str("Original uploaded filename.")),
+			req("mime_type", str("Detected MIME type.")),
+			req("size_bytes", intProp("File size in bytes.")),
+			req("created_at", dateTime()),
+		),
+		"UploadListResponse": listItemsOnlySchema("UploadView"),
+		"AttachRequest": obj(
+			req("upload_ids", arr(uuidStr())),
+			req("target_type", targetTypeSchema()),
+			req("target_id", uuidStr()),
+			prop("metadata", freeObj("Optional attachment metadata.")),
+		),
+		"ReorderAttachmentsRequest": obj(req("ids", arr(uuidStr()))),
+		"AttachmentView": obj(
+			req("id", uuidStr()),
+			req("upload_id", uuidStr()),
+			req("target_type", targetTypeSchema()),
+			req("target_id", uuidStr()),
+			req("sort_order", intProp("Sort order inside target.")),
+			req("metadata", freeObj("Attachment metadata.")),
+			req("created_at", dateTime()),
+			req("url", str("Public uploaded file URL.")),
+			req("original_name", str("Original uploaded filename.")),
+			req("mime_type", str("Detected MIME type.")),
+			req("size_bytes", intProp("File size in bytes.")),
+		),
+		"AttachmentListResponse": listItemsOnlySchema("AttachmentView"),
 
 		"CreateOrderRequest":    obj(req("title", str("Order title.")), req("description", str("Order description.")), prop("category_id", intProp("Category id.")), prop("category_slug", str("Category slug.")), req("budget_amount", num("Budget amount.")), prop("currency", str("Three-letter currency code.")), prop("promotions", arr(str("Promotion code.")))),
 		"UpdateOrderRequest":    obj(prop("title", str("Order title.")), prop("description", str("Order description.")), prop("category_id", intProp("Category id.")), prop("category_slug", str("Category slug.")), prop("budget_amount", num("Budget amount.")), prop("currency", str("Three-letter currency code."))),
@@ -391,6 +442,17 @@ func body(schema string) map[string]any {
 	}
 }
 
+func multipartFilesBody() map[string]any {
+	return map[string]any{
+		"required": true,
+		"content": map[string]any{
+			"multipart/form-data": map[string]any{
+				"schema": obj(req("file", arr(map[string]any{"type": "string", "format": "binary"}))),
+			},
+		},
+	}
+}
+
 func path(name, schemaType, description string) map[string]any {
 	return param(name, "path", schemaType, true, description)
 }
@@ -467,6 +529,10 @@ func enumStr(values ...string) map[string]any {
 	return map[string]any{"type": "string", "enum": enum}
 }
 
+func targetTypeSchema() map[string]any {
+	return enumStr("profile_document", "order_attachment", "response_attachment", "review_attachment", "chat_attachment", "course_material")
+}
+
 func intProp(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
 }
@@ -494,4 +560,8 @@ func listSchema(itemSchema string) map[string]any {
 		req("page_size", intProp("Page size.")),
 		req("total", intProp("Total matching items.")),
 	)
+}
+
+func listItemsOnlySchema(itemSchema string) map[string]any {
+	return obj(req("items", arr(ref(itemSchema))))
 }

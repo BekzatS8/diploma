@@ -9,6 +9,7 @@ import (
 	"buhpro/internal/http/handlers/system"
 	"buhpro/internal/http/middleware"
 	"buhpro/internal/http/swagger"
+	attachmentsmodule "buhpro/internal/modules/attachments"
 	authmodule "buhpro/internal/modules/auth"
 	chatsmodule "buhpro/internal/modules/chats"
 	coursesmodule "buhpro/internal/modules/courses"
@@ -20,6 +21,7 @@ import (
 	responsesmodule "buhpro/internal/modules/responses"
 	reviewsmodule "buhpro/internal/modules/reviews"
 	selectionmodule "buhpro/internal/modules/selection"
+	uploadsmodule "buhpro/internal/modules/uploads"
 	"buhpro/internal/platform/metrics"
 
 	"github.com/gin-contrib/cors"
@@ -42,6 +44,8 @@ type Deps struct {
 	CoursesHandler       *coursesmodule.Handler
 	ChatsHandler         *chatsmodule.Handler
 	NotificationsHandler *notificationsmodule.Handler
+	UploadsHandler       *uploadsmodule.Handler
+	AttachmentsHandler   *attachmentsmodule.Handler
 	Metrics              *metrics.Metrics
 }
 
@@ -68,6 +72,7 @@ func New(deps Deps) *gin.Engine {
 
 	r.GET("/healthz", deps.SystemHandlers.Healthz)
 	r.GET("/readyz", deps.SystemHandlers.Readyz)
+	r.Static("/uploads", deps.Config.Storage.LocalPath)
 	swagger.Register(r)
 
 	v1 := r.Group("/api/v1")
@@ -88,6 +93,25 @@ func New(deps Deps) *gin.Engine {
 		profileGroup.Use(middleware.RequireAuth(deps.JWTManager))
 		profileGroup.GET("", deps.ProfileHandler.Get)
 		profileGroup.PATCH("", deps.ProfileHandler.Patch)
+		profileGroup.PATCH("/avatar", deps.ProfileHandler.SetAvatar)
+		profileGroup.DELETE("/avatar", deps.ProfileHandler.ClearAvatar)
+
+		filesGroup := v1.Group("/files")
+		filesGroup.GET("/:id", deps.UploadsHandler.GetByID)
+		filesGroup.Use(middleware.RequireAuth(deps.JWTManager))
+		filesGroup.POST("", deps.UploadsHandler.Upload)
+		filesGroup.DELETE("/:id", deps.UploadsHandler.Delete)
+
+		myFilesGroup := v1.Group("/my/files")
+		myFilesGroup.Use(middleware.RequireAuth(deps.JWTManager))
+		myFilesGroup.GET("", deps.UploadsHandler.ListMy)
+
+		attachmentsGroup := v1.Group("/attachments")
+		attachmentsGroup.GET("", deps.AttachmentsHandler.List)
+		attachmentsGroup.Use(middleware.RequireAuth(deps.JWTManager))
+		attachmentsGroup.POST("", deps.AttachmentsHandler.Attach)
+		attachmentsGroup.PATCH("/reorder", deps.AttachmentsHandler.Reorder)
+		attachmentsGroup.DELETE("/:id", deps.AttachmentsHandler.Delete)
 
 		ordersGroup := v1.Group("/orders")
 		ordersGroup.Use(middleware.OptionalAuth(deps.JWTManager))

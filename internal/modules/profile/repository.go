@@ -21,38 +21,71 @@ func (r *Repository) GetByRole(ctx context.Context, userID, role string) (map[st
 	switch role {
 	case "client":
 		var companyName, phone, about *string
-		err := r.db.QueryRow(ctx, `SELECT company_name, phone, about FROM client_profiles WHERE user_id=$1`, userID).Scan(&companyName, &phone, &about)
+		var avatarUploadID *string
+		err := r.db.QueryRow(ctx, `SELECT company_name, phone, about, avatar_upload_id::text FROM client_profiles WHERE user_id=$1`, userID).Scan(&companyName, &phone, &about, &avatarUploadID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return map[string]any{}, nil
 			}
 			return nil, err
 		}
-		return map[string]any{"company_name": companyName, "phone": phone, "about": about}, nil
+		return map[string]any{"company_name": companyName, "phone": phone, "about": about, "avatar_upload_id": avatarUploadID}, nil
 	case "executor":
 		var displayName, bio *string
 		var years int
-		err := r.db.QueryRow(ctx, `SELECT display_name, bio, years_experience FROM executor_profiles WHERE user_id=$1`, userID).Scan(&displayName, &bio, &years)
+		var avatarUploadID *string
+		err := r.db.QueryRow(ctx, `SELECT display_name, bio, years_experience, avatar_upload_id::text FROM executor_profiles WHERE user_id=$1`, userID).Scan(&displayName, &bio, &years, &avatarUploadID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return map[string]any{}, nil
 			}
 			return nil, err
 		}
-		return map[string]any{"profile_name": displayName, "bio": bio, "years_experience": years}, nil
+		return map[string]any{"profile_name": displayName, "bio": bio, "years_experience": years, "avatar_upload_id": avatarUploadID}, nil
 	case "coach":
 		var displayName, bio, expertise *string
-		err := r.db.QueryRow(ctx, `SELECT display_name, bio, expertise FROM coach_profiles WHERE user_id=$1`, userID).Scan(&displayName, &bio, &expertise)
+		var avatarUploadID *string
+		err := r.db.QueryRow(ctx, `SELECT display_name, bio, expertise, avatar_upload_id::text FROM coach_profiles WHERE user_id=$1`, userID).Scan(&displayName, &bio, &expertise, &avatarUploadID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return map[string]any{}, nil
 			}
 			return nil, err
 		}
-		return map[string]any{"profile_name": displayName, "bio": bio, "expertise": expertise}, nil
+		return map[string]any{"profile_name": displayName, "bio": bio, "expertise": expertise, "avatar_upload_id": avatarUploadID}, nil
 	default:
 		return nil, fmt.Errorf("unsupported role")
 	}
+}
+
+func (r *Repository) SetAvatarUploadID(ctx context.Context, userID, role, uploadID string) error {
+	var err error
+	switch role {
+	case "client":
+		_, err = r.db.Exec(ctx, `UPDATE client_profiles SET avatar_upload_id=$2, updated_at=NOW() WHERE user_id=$1`, userID, uploadID)
+	case "executor":
+		_, err = r.db.Exec(ctx, `UPDATE executor_profiles SET avatar_upload_id=$2, updated_at=NOW() WHERE user_id=$1`, userID, uploadID)
+	case "coach":
+		_, err = r.db.Exec(ctx, `UPDATE coach_profiles SET avatar_upload_id=$2, updated_at=NOW() WHERE user_id=$1`, userID, uploadID)
+	default:
+		err = fmt.Errorf("unsupported role")
+	}
+	return err
+}
+
+func (r *Repository) ClearAvatarUploadID(ctx context.Context, userID, role string) error {
+	var err error
+	switch role {
+	case "client":
+		_, err = r.db.Exec(ctx, `UPDATE client_profiles SET avatar_upload_id=NULL, updated_at=NOW() WHERE user_id=$1`, userID)
+	case "executor":
+		_, err = r.db.Exec(ctx, `UPDATE executor_profiles SET avatar_upload_id=NULL, updated_at=NOW() WHERE user_id=$1`, userID)
+	case "coach":
+		_, err = r.db.Exec(ctx, `UPDATE coach_profiles SET avatar_upload_id=NULL, updated_at=NOW() WHERE user_id=$1`, userID)
+	default:
+		err = fmt.Errorf("unsupported role")
+	}
+	return err
 }
 
 func (r *Repository) PatchByRole(ctx context.Context, userID, role string, req UpdateProfileRequest) error {

@@ -1,5 +1,6 @@
 .git
 .cache
 bin
+/uploads
 .env
 *.log

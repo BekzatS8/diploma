@@ -97,6 +97,11 @@ func (bw *bufferedResponseWriter) FlushOriginal() {
 
 func DebugErrorMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/uploads/") {
+			c.Next()
+			return
+		}
+
 		originalWriter := c.Writer
 		bufferedWriter := newBufferedResponseWriter(originalWriter)
 		c.Writer = bufferedWriter

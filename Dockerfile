@@ -10,6 +10,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /bin/buhpro-api ./cmd/api
 FROM alpine:3.21
 WORKDIR /app
 RUN adduser -D -g '' appuser
+RUN mkdir -p /app/uploads && chown -R appuser:appuser /app/uploads
 
 COPY --from=builder /bin/buhpro-api /app/buhpro-api
 COPY migrations /app/migrations

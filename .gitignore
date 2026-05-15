@@ -1,3 +1,5 @@
 .env
 bin/
 .cache/
+/uploads/
+reference/

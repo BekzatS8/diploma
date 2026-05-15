@@ -9,3 +9,7 @@ type UpdateProfileRequest struct {
 	About           *string `json:"about"`
 	YearsExperience *int    `json:"years_experience"`
 }
+
+type SetAvatarRequest struct {
+	UploadID string `json:"upload_id" binding:"required"`
+}

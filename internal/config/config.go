@@ -56,13 +56,15 @@ type JWTConfig struct {
 }
 
 type StorageConfig struct {
-	Provider  string
-	Endpoint  string
-	Region    string
-	Bucket    string
-	AccessKey string
-	SecretKey string
-	UseSSL    bool
+	Provider      string
+	Endpoint      string
+	Region        string
+	Bucket        string
+	AccessKey     string
+	SecretKey     string
+	UseSSL        bool
+	LocalPath     string
+	PublicBaseURL string
 }
 
 type PaymentsConfig struct {
@@ -130,13 +132,15 @@ func Load() (Config, error) {
 			RefreshSecretKey: os.Getenv("JWT_REFRESH_SECRET"),
 		},
 		Storage: StorageConfig{
-			Provider:  getEnv("STORAGE_PROVIDER", "mock"),
-			Endpoint:  getEnv("STORAGE_ENDPOINT", ""),
-			Region:    getEnv("STORAGE_REGION", ""),
-			Bucket:    getEnv("STORAGE_BUCKET", ""),
-			AccessKey: getEnv("STORAGE_ACCESS_KEY", ""),
-			SecretKey: getEnv("STORAGE_SECRET_KEY", ""),
-			UseSSL:    getEnvAsBool("STORAGE_USE_SSL", true),
+			Provider:      getEnv("STORAGE_PROVIDER", "local"),
+			Endpoint:      getEnv("STORAGE_ENDPOINT", ""),
+			Region:        getEnv("STORAGE_REGION", ""),
+			Bucket:        getEnv("STORAGE_BUCKET", ""),
+			AccessKey:     getEnv("STORAGE_ACCESS_KEY", ""),
+			SecretKey:     getEnv("STORAGE_SECRET_KEY", ""),
+			UseSSL:        getEnvAsBool("STORAGE_USE_SSL", true),
+			LocalPath:     getEnv("STORAGE_LOCAL_PATH", "uploads"),
+			PublicBaseURL: getEnv("STORAGE_PUBLIC_BASE_URL", "/uploads"),
 		},
 		Payments: PaymentsConfig{
 			Provider:    getEnv("PAYMENTS_PROVIDER", "mock"),
