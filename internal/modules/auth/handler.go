@@ -28,11 +28,27 @@ func (h *Handler) Register(c *gin.Context) {
 	}
 
 	user, pair, err := h.service.Register(c.Request.Context(), RegisterInput{
-		Email:       req.Email,
-		Password:    req.Password,
-		Role:        req.Role,
-		ProfileName: req.ProfileName,
-		Phone:       req.Phone,
+		Email:           req.Email,
+		Password:        req.Password,
+		Role:            req.Role,
+		ProfileName:     req.ProfileName,
+		Phone:           req.Phone,
+		ClientType:      req.ClientType,
+		TaxNumber:       req.TaxNumber,
+		ContactName:     req.ContactName,
+		ContactPosition: req.ContactPosition,
+		Address:         req.Address,
+		About:           req.About,
+		FirstName:       req.FirstName,
+		LastName:        req.LastName,
+		MiddleName:      req.MiddleName,
+		IIN:             req.IIN,
+		City:            req.City,
+		ExperienceLevel: req.ExperienceLevel,
+		Specializations: req.Specializations,
+		Education:       req.Education,
+		WorkFormat:      req.WorkFormat,
+		HourlyRate:      req.HourlyRate,
 	})
 	if err != nil {
 		h.handleAuthError(c, err)
@@ -40,11 +56,12 @@ func (h *Handler) Register(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusCreated, AuthResponse{
-		UserID:       user.ID,
-		Email:        user.Email,
-		Role:         user.Role,
-		AccessToken:  pair.AccessToken,
-		RefreshToken: pair.RefreshToken,
+		UserID:             user.ID,
+		Email:              user.Email,
+		Role:               user.Role,
+		VerificationStatus: user.VerificationStatus,
+		AccessToken:        pair.AccessToken,
+		RefreshToken:       pair.RefreshToken,
 	})
 }
 
@@ -62,11 +79,12 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusOK, AuthResponse{
-		UserID:       user.ID,
-		Email:        user.Email,
-		Role:         user.Role,
-		AccessToken:  pair.AccessToken,
-		RefreshToken: pair.RefreshToken,
+		UserID:             user.ID,
+		Email:              user.Email,
+		Role:               user.Role,
+		VerificationStatus: user.VerificationStatus,
+		AccessToken:        pair.AccessToken,
+		RefreshToken:       pair.RefreshToken,
 	})
 }
 
@@ -127,10 +145,11 @@ func (h *Handler) Me(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusOK, gin.H{
-		"id":      user.ID,
-		"email":   user.Email,
-		"role":    user.Role,
-		"profile": profile,
+		"id":                  user.ID,
+		"email":               user.Email,
+		"role":                user.Role,
+		"verification_status": user.VerificationStatus,
+		"profile":             profile,
 	})
 }
 
@@ -140,6 +159,8 @@ func (h *Handler) handleAuthError(c *gin.Context, err error) {
 		response.JSONError(c, http.StatusConflict, "email_exists", "Email already in use")
 	case errors.Is(err, ErrInvalidRole):
 		response.JSONError(c, http.StatusBadRequest, "invalid_role", "Unsupported role")
+	case errors.Is(err, ErrExecutorLeadRequired):
+		response.JSONError(c, http.StatusBadRequest, "executor_lead_required", "Executor registration requires document lead verification")
 	case errors.Is(err, ErrInvalidCredentials):
 		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Invalid email or password")
 	case errors.Is(err, ErrUnauthorized):

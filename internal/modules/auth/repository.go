@@ -20,7 +20,7 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) CreateUserWithProfile(ctx context.Context, user User, profileName, phone string) error {
+func (r *Repository) CreateUserWithProfile(ctx context.Context, user User, in RegisterInput) error {
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -28,9 +28,9 @@ func (r *Repository) CreateUserWithProfile(ctx context.Context, user User, profi
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO users (id, email, password_hash, role, is_active)
-		VALUES ($1, $2, $3, $4, true)
-	`, user.ID, strings.ToLower(user.Email), user.PasswordHash, user.Role)
+		INSERT INTO users (id, email, password_hash, role, is_active, verification_status)
+		VALUES ($1, $2, $3, $4, true, $5)
+	`, user.ID, strings.ToLower(user.Email), user.PasswordHash, user.Role, defaultVerificationStatus(user.VerificationStatus))
 	if err != nil {
 		return mapPgError(err)
 	}
@@ -38,19 +38,25 @@ func (r *Repository) CreateUserWithProfile(ctx context.Context, user User, profi
 	switch user.Role {
 	case "client":
 		_, err = tx.Exec(ctx, `
-			INSERT INTO client_profiles (user_id, company_name, phone)
-			VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
-		`, user.ID, profileName, phone)
+			INSERT INTO client_profiles (
+				user_id, company_name, phone, client_type, tax_number, contact_name,
+				contact_position, address, about
+			)
+			VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''))
+		`, user.ID, firstNonEmpty(in.ProfileName, in.ContactName), in.Phone, in.ClientType, in.TaxNumber, in.ContactName, in.ContactPosition, in.Address, in.About)
 	case "executor":
 		_, err = tx.Exec(ctx, `
-			INSERT INTO executor_profiles (user_id, display_name)
-			VALUES ($1, NULLIF($2, ''))
-		`, user.ID, profileName)
+			INSERT INTO executor_profiles (
+				user_id, display_name, first_name, last_name, middle_name, iin, phone, city,
+				experience_level, education, work_format, hourly_rate, about, verification_status
+			)
+			VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), $12, NULLIF($13, ''), 'pending')
+		`, user.ID, firstNonEmpty(in.ProfileName, strings.TrimSpace(in.FirstName+" "+in.LastName)), in.FirstName, in.LastName, in.MiddleName, in.IIN, in.Phone, in.City, in.ExperienceLevel, in.Education, in.WorkFormat, in.HourlyRate, in.About)
 	case "coach":
 		_, err = tx.Exec(ctx, `
 			INSERT INTO coach_profiles (user_id, display_name)
 			VALUES ($1, NULLIF($2, ''))
-		`, user.ID, profileName)
+		`, user.ID, in.ProfileName)
 	default:
 		return ErrInvalidRole
 	}
@@ -66,8 +72,8 @@ func (r *Repository) CreateUserWithProfile(ctx context.Context, user User, profi
 
 func (r *Repository) CreateAdmin(ctx context.Context, user User) error {
 	_, err := r.db.Exec(ctx, `
-		INSERT INTO users (id, email, password_hash, role, is_active)
-		VALUES ($1, $2, $3, 'admin', true)
+		INSERT INTO users (id, email, password_hash, role, is_active, verification_status)
+		VALUES ($1, $2, $3, 'admin', true, 'verified')
 	`, user.ID, strings.ToLower(user.Email), user.PasswordHash)
 	if err != nil {
 		return mapPgError(err)
@@ -78,10 +84,12 @@ func (r *Repository) CreateAdmin(ctx context.Context, user User) error {
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, error) {
 	var u User
 	err := r.db.QueryRow(ctx, `
-		SELECT id, email, password_hash, role, is_active, created_at
+		SELECT id, email, password_hash, role, is_active, verification_status,
+		       verification_submitted_at, verification_reviewed_at, verification_reviewed_by::text,
+		       verification_rejection_reason, created_at
 		FROM users
 		WHERE email = $1
-	`, strings.ToLower(email)).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.IsActive, &u.CreatedAt)
+	`, strings.ToLower(email)).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.IsActive, &u.VerificationStatus, &u.VerificationSubmittedAt, &u.VerificationReviewedAt, &u.VerificationReviewedBy, &u.VerificationRejectionReason, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrInvalidCredentials
@@ -94,10 +102,12 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, er
 func (r *Repository) GetUserByID(ctx context.Context, userID string) (User, error) {
 	var u User
 	err := r.db.QueryRow(ctx, `
-		SELECT id, email, password_hash, role, is_active, created_at
+		SELECT id, email, password_hash, role, is_active, verification_status,
+		       verification_submitted_at, verification_reviewed_at, verification_reviewed_by::text,
+		       verification_rejection_reason, created_at
 		FROM users
 		WHERE id = $1
-	`, userID).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.IsActive, &u.CreatedAt)
+	`, userID).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.IsActive, &u.VerificationStatus, &u.VerificationSubmittedAt, &u.VerificationReviewedAt, &u.VerificationReviewedBy, &u.VerificationRejectionReason, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrUnauthorized
@@ -179,4 +189,21 @@ func mapPgError(err error) error {
 		return ErrEmailAlreadyExists
 	}
 	return err
+}
+
+func defaultVerificationStatus(status string) string {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return "verified"
+	}
+	return status
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

@@ -2,6 +2,7 @@ package profile
 
 import (
 	"context"
+	"strings"
 
 	"buhpro/internal/modules/uploads"
 )
@@ -37,6 +38,18 @@ func (s *Service) UpdateCurrentProfile(ctx context.Context, userID, role string,
 		v := 0
 		req.YearsExperience = &v
 	}
+	if req.HourlyRate != nil && *req.HourlyRate < 0 {
+		v := 0.0
+		req.HourlyRate = &v
+	}
+	if req.IIN != nil {
+		v := strings.TrimSpace(*req.IIN)
+		if v != "" && len(v) != 12 {
+			return uploads.ErrInvalidInput
+		}
+		req.IIN = &v
+	}
+	req.Specializations = normalizeSpecializations(req.Specializations)
 	return s.repo.PatchByRole(ctx, userID, role, req)
 }
 
@@ -53,4 +66,25 @@ func (s *Service) SetAvatar(ctx context.Context, userID, role, uploadID string) 
 
 func (s *Service) ClearAvatar(ctx context.Context, userID, role string) error {
 	return s.repo.ClearAvatarUploadID(ctx, userID, role)
+}
+
+func normalizeSpecializations(items []string) []string {
+	if items == nil {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	seen := map[string]struct{}{}
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
 }

@@ -20,6 +20,7 @@ import (
 	chatsmodule "buhpro/internal/modules/chats"
 	coursesmodule "buhpro/internal/modules/courses"
 	devpaymentsmodule "buhpro/internal/modules/devpayments"
+	leadsmodule "buhpro/internal/modules/leads"
 	notificationsmodule "buhpro/internal/modules/notifications"
 	ordersmodule "buhpro/internal/modules/orders"
 	profilemodule "buhpro/internal/modules/profile"
@@ -112,6 +113,8 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	chatsService := chatsmodule.NewService(chatsRepo, notificationsService)
 	attachmentsRepo := attachmentsmodule.NewRepository(dbPool)
 	attachmentsService := attachmentsmodule.NewService(attachmentsRepo, uploadsService)
+	leadsRepo := leadsmodule.NewRepository(dbPool)
+	leadsService := leadsmodule.NewService(leadsRepo, storageProvider)
 
 	if cfg.Bootstrap.EnableAdmin {
 		if err := authService.BootstrapAdmin(startupCtx, cfg.Bootstrap.AdminEmail, cfg.Bootstrap.AdminPassword); err != nil {
@@ -133,6 +136,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	notificationsHandler := notificationsmodule.NewHandler(notificationsService)
 	uploadsHandler := uploadsmodule.NewHandler(uploadsService)
 	attachmentsHandler := attachmentsmodule.NewHandler(attachmentsService)
+	leadsHandler := leadsmodule.NewHandler(leadsService)
 
 	metricsCollector := metrics.New()
 	systemHandler := system.NewHandler(&readinessChecker{dbPool: dbPool, healthCheck: cfg.DB.HealthTimeout})
@@ -155,6 +159,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 		NotificationsHandler: notificationsHandler,
 		UploadsHandler:       uploadsHandler,
 		AttachmentsHandler:   attachmentsHandler,
+		LeadsHandler:         leadsHandler,
 		Metrics:              metricsCollector,
 	})
 

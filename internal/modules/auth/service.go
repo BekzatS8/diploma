@@ -14,10 +14,11 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrUnauthorized       = errors.New("unauthorized")
-	ErrEmailAlreadyExists = errors.New("email already exists")
-	ErrInvalidRole        = errors.New("invalid role")
+	ErrInvalidCredentials   = errors.New("invalid credentials")
+	ErrUnauthorized         = errors.New("unauthorized")
+	ErrEmailAlreadyExists   = errors.New("email already exists")
+	ErrInvalidRole          = errors.New("invalid role")
+	ErrExecutorLeadRequired = errors.New("executor lead required")
 )
 
 type Service struct {
@@ -30,11 +31,27 @@ func NewService(repo *Repository, jwt *commonauth.JWTManager) *Service {
 }
 
 type RegisterInput struct {
-	Email       string
-	Password    string
-	Role        string
-	ProfileName string
-	Phone       string
+	Email           string
+	Password        string
+	Role            string
+	ProfileName     string
+	Phone           string
+	ClientType      string
+	TaxNumber       string
+	ContactName     string
+	ContactPosition string
+	Address         string
+	About           string
+	FirstName       string
+	LastName        string
+	MiddleName      string
+	IIN             string
+	City            string
+	ExperienceLevel string
+	Specializations []string
+	Education       string
+	WorkFormat      string
+	HourlyRate      *float64
 }
 
 type TokenPair struct {
@@ -50,7 +67,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, email, password string) er
 	if err != nil {
 		return err
 	}
-	user := User{ID: uuid.NewString(), Email: strings.TrimSpace(strings.ToLower(email)), PasswordHash: hash, Role: "admin", IsActive: true}
+	user := User{ID: uuid.NewString(), Email: strings.TrimSpace(strings.ToLower(email)), PasswordHash: hash, Role: "admin", IsActive: true, VerificationStatus: "verified"}
 	if err := s.repo.CreateAdmin(ctx, user); err != nil {
 		if errors.Is(err, ErrEmailAlreadyExists) {
 			return nil
@@ -65,6 +82,9 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (User, TokenPa
 	if role != "client" && role != "executor" && role != "coach" {
 		return User{}, TokenPair{}, ErrInvalidRole
 	}
+	if role == "executor" {
+		return User{}, TokenPair{}, ErrExecutorLeadRequired
+	}
 	if err := ValidatePassword(in.Password); err != nil {
 		return User{}, TokenPair{}, err
 	}
@@ -75,13 +95,14 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (User, TokenPa
 	}
 
 	user := User{
-		ID:           uuid.NewString(),
-		Email:        strings.TrimSpace(strings.ToLower(in.Email)),
-		PasswordHash: hash,
-		Role:         role,
-		IsActive:     true,
+		ID:                 uuid.NewString(),
+		Email:              strings.TrimSpace(strings.ToLower(in.Email)),
+		PasswordHash:       hash,
+		Role:               role,
+		IsActive:           true,
+		VerificationStatus: "verified",
 	}
-	if err := s.repo.CreateUserWithProfile(ctx, user, in.ProfileName, in.Phone); err != nil {
+	if err := s.repo.CreateUserWithProfile(ctx, user, in); err != nil {
 		return User{}, TokenPair{}, err
 	}
 

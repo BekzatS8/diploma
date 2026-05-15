@@ -1,11 +1,27 @@
 package auth
 
 type RegisterRequest struct {
-	Email       string `json:"email" binding:"required,email"`
-	Password    string `json:"password" binding:"required"`
-	Role        string `json:"role" binding:"required"`
-	ProfileName string `json:"profile_name"`
-	Phone       string `json:"phone"`
+	Email           string   `json:"email" binding:"required,email"`
+	Password        string   `json:"password" binding:"required"`
+	Role            string   `json:"role" binding:"required"`
+	ProfileName     string   `json:"profile_name"`
+	Phone           string   `json:"phone"`
+	ClientType      string   `json:"client_type"`
+	TaxNumber       string   `json:"tax_number"`
+	ContactName     string   `json:"contact_name"`
+	ContactPosition string   `json:"contact_position"`
+	Address         string   `json:"address"`
+	About           string   `json:"about"`
+	FirstName       string   `json:"first_name"`
+	LastName        string   `json:"last_name"`
+	MiddleName      string   `json:"middle_name"`
+	IIN             string   `json:"iin"`
+	City            string   `json:"city"`
+	ExperienceLevel string   `json:"experience_level"`
+	Specializations []string `json:"specializations"`
+	Education       string   `json:"education"`
+	WorkFormat      string   `json:"work_format"`
+	HourlyRate      *float64 `json:"hourly_rate"`
 }
 
 type LoginRequest struct {
@@ -22,9 +38,10 @@ type LogoutRequest struct {
 }
 
 type AuthResponse struct {
-	UserID       string `json:"user_id"`
-	Email        string `json:"email"`
-	Role         string `json:"role"`
-	AccessToken  string `json:"access_token,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
+	UserID             string `json:"user_id"`
+	Email              string `json:"email"`
+	Role               string `json:"role"`
+	VerificationStatus string `json:"verification_status,omitempty"`
+	AccessToken        string `json:"access_token,omitempty"`
+	RefreshToken       string `json:"refresh_token,omitempty"`
 }

@@ -14,6 +14,7 @@ import (
 	chatsmodule "buhpro/internal/modules/chats"
 	coursesmodule "buhpro/internal/modules/courses"
 	devpaymentsmodule "buhpro/internal/modules/devpayments"
+	leadsmodule "buhpro/internal/modules/leads"
 	notificationsmodule "buhpro/internal/modules/notifications"
 	ordersmodule "buhpro/internal/modules/orders"
 	profilemodule "buhpro/internal/modules/profile"
@@ -46,6 +47,7 @@ type Deps struct {
 	NotificationsHandler *notificationsmodule.Handler
 	UploadsHandler       *uploadsmodule.Handler
 	AttachmentsHandler   *attachmentsmodule.Handler
+	LeadsHandler         *leadsmodule.Handler
 	Metrics              *metrics.Metrics
 }
 
@@ -112,6 +114,17 @@ func New(deps Deps) *gin.Engine {
 		attachmentsGroup.POST("", deps.AttachmentsHandler.Attach)
 		attachmentsGroup.PATCH("/reorder", deps.AttachmentsHandler.Reorder)
 		attachmentsGroup.DELETE("/:id", deps.AttachmentsHandler.Delete)
+
+		leadsGroup := v1.Group("/leads")
+		leadsGroup.POST("/executor", deps.LeadsHandler.SubmitExecutor)
+
+		adminLeadsGroup := v1.Group("/admin/executor-leads")
+		adminLeadsGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
+		adminLeadsGroup.GET("", deps.LeadsHandler.List)
+		adminLeadsGroup.GET("/:id", deps.LeadsHandler.GetByID)
+		adminLeadsGroup.PATCH("/:id/status", deps.LeadsHandler.UpdateStatus)
+		adminLeadsGroup.POST("/:id/approve", deps.LeadsHandler.Approve)
+		adminLeadsGroup.POST("/:id/reject", deps.LeadsHandler.Reject)
 
 		ordersGroup := v1.Group("/orders")
 		ordersGroup.Use(middleware.OptionalAuth(deps.JWTManager))

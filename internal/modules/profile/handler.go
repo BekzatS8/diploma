@@ -108,6 +108,8 @@ func (h *Handler) ClearAvatar(c *gin.Context) {
 
 func (h *Handler) handleErr(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, uploads.ErrInvalidInput):
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid profile data")
 	case errors.Is(err, uploads.ErrNotFound):
 		response.JSONError(c, http.StatusNotFound, "not_found", "Upload not found")
 	case errors.Is(err, uploads.ErrForbidden):

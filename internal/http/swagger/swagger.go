@@ -59,6 +59,8 @@ func Spec() map[string]any {
 			tag("Profile", "Current role profile read/update."),
 			tag("Uploads", "Local file upload metadata and private owner file management."),
 			tag("Attachments", "Polymorphic one-to-many file links for domain entities."),
+			tag("Executor Leads", "Public executor registration with document verification."),
+			tag("Admin Executor Leads", "Admin review and conversion of executor leads."),
 			tag("Orders", "Client order creation, management and public feed."),
 			tag("Responses", "Executor paid responses and client response review."),
 			tag("Dev Payments", "Development-only payment confirmation/failure endpoints."),
@@ -82,7 +84,7 @@ func paths() map[string]any {
 		"/metrics":     get("System", "Prometheus metrics", "Prometheus scrape endpoint when METRICS_ENABLED=true.", false, nil, nil, textOK()),
 		"/api/v1/ping": get("System", "API ping", "Versioned API ping endpoint.", false, nil, nil, ok("PingResponse")),
 
-		"/api/v1/auth/register": post("Auth", "Register user", "Creates a client, executor or coach user and its role profile in one transaction.", false, nil, body("RegisterRequest"), created("AuthResponse")),
+		"/api/v1/auth/register": post("Auth", "Register user", "Creates a client or coach user and its role profile in one transaction. Executors must use the executor lead endpoint with documents.", false, nil, body("RegisterRequest"), created("AuthResponse")),
 		"/api/v1/auth/login":    post("Auth", "Login", "Authenticates by email and password and returns access/refresh tokens.", false, nil, body("LoginRequest"), ok("AuthResponse")),
 		"/api/v1/auth/refresh":  post("Auth", "Refresh tokens", "Rotates a valid refresh token and returns a new token pair.", false, nil, body("RefreshRequest"), ok("TokenPair")),
 		"/api/v1/auth/logout":   post("Auth", "Logout", "Revokes the current refresh token.", true, nil, body("LogoutRequest"), ok("StatusResponse")),
@@ -107,6 +109,15 @@ func paths() map[string]any {
 		),
 		"/api/v1/attachments/reorder": patchOp("Attachments", "Reorder attachments", "Rewrites sort_order by the provided attachment id order.", true, nil, body("ReorderAttachmentsRequest"), ok("StatusResponse")),
 		"/api/v1/attachments/{id}":    pathItem(deleteOp("Attachments", "Delete attachment link", "Deletes only the attachment link; the uploaded file remains in storage.", true, []any{path("id", "string", "Attachment UUID.")}, nil, ok("StatusResponse"))),
+
+		"/api/v1/leads/executor": post("Executor Leads", "Submit executor registration lead", "Public multipart endpoint for executor registration. Requires identity_document and education_document files; ip_registration_document is optional.", false, nil, executorLeadMultipartBody(), created("ExecutorLeadSubmittedResponse")),
+		"/api/v1/admin/executor-leads": get("Admin Executor Leads", "List executor leads", "Admin list of executor registration leads.", true, []any{
+			query("status", "string", false, "Optional lead status."), pageParam(), pageSizeParam(),
+		}, nil, listOK("ExecutorLeadListResponse")),
+		"/api/v1/admin/executor-leads/{id}":         get("Admin Executor Leads", "Get executor lead", "Admin detail view with submitted documents.", true, []any{path("id", "string", "Lead UUID.")}, nil, ok("ExecutorLeadView")),
+		"/api/v1/admin/executor-leads/{id}/status":  patchOp("Admin Executor Leads", "Update executor lead status", "Marks a lead as new, in_review or approved without conversion.", true, []any{path("id", "string", "Lead UUID.")}, body("UpdateLeadStatusRequest"), ok("StatusResponse")),
+		"/api/v1/admin/executor-leads/{id}/approve": post("Admin Executor Leads", "Approve executor lead", "Converts a verified lead into an executor user, executor profile, uploads and profile_document attachments.", true, []any{path("id", "string", "Lead UUID.")}, body("ApproveLeadRequest"), created("ApproveLeadResponse")),
+		"/api/v1/admin/executor-leads/{id}/reject":  post("Admin Executor Leads", "Reject executor lead", "Rejects a lead with a reason.", true, []any{path("id", "string", "Lead UUID.")}, body("RejectLeadRequest"), ok("StatusResponse")),
 
 		"/api/v1/orders": pathItem(
 			getOp("Orders", "Public orders feed", "Lists published, non-deleted orders with category, budget and text filters.", false, []any{
@@ -245,17 +256,54 @@ func schemas() map[string]any {
 		"StatusResponse":       obj(prop("status", str("Operation status."))),
 		"HealthResponse":       obj(prop("status", str("Service status."))),
 		"PingResponse":         obj(prop("message", str("pong"))),
-		"RegisterRequest":      obj(req("email", str("User email.")), req("password", str("Password, minimum 8 chars.")), req("role", enumStr("client", "executor", "coach")), req("profile_name", str("Initial profile display/company name.")), prop("phone", str("Phone for client profile."))),
+		"RegisterRequest":      obj(req("email", str("User email.")), req("password", str("Password, minimum 8 chars.")), req("role", enumStr("client", "coach")), req("profile_name", str("Initial profile display/company name.")), prop("phone", str("Phone for client profile.")), prop("client_type", enumStr("too", "ip", "representative")), prop("tax_number", str("BIN/IIN.")), prop("contact_name", str("Contact person.")), prop("contact_position", str("Contact position.")), prop("address", str("Legal/contact address.")), prop("about", str("Profile description."))),
 		"LoginRequest":         obj(req("email", str("User email.")), req("password", str("User password."))),
 		"RefreshRequest":       obj(req("refresh_token", str("Refresh JWT."))),
 		"LogoutRequest":        obj(req("refresh_token", str("Refresh JWT to revoke."))),
 		"TokenPair":            obj(req("access_token", str("Access JWT.")), req("refresh_token", str("Refresh JWT."))),
 		"AuthResponse":         obj(req("user", ref("User")), req("tokens", ref("TokenPair")), prop("profile", freeObj("Current role profile."))),
 		"MeResponse":           obj(req("user", ref("User")), prop("profile", freeObj("Current role profile."))),
-		"User":                 obj(req("id", uuidStr()), req("email", str("Email.")), req("role", enumStr("client", "executor", "coach", "admin")), req("is_active", boolProp("Active flag.")), req("created_at", dateTime())),
+		"User":                 obj(req("id", uuidStr()), req("email", str("Email.")), req("role", enumStr("client", "executor", "coach", "admin")), req("is_active", boolProp("Active flag.")), prop("verification_status", verificationStatusSchema()), req("created_at", dateTime())),
 		"ProfileResponse":      freeObj("Role-specific profile payload."),
 		"UpdateProfileRequest": freeObj("Role-specific profile fields: company_name, phone, about, display_name, bio, years_experience, expertise."),
 		"SetAvatarRequest":     obj(req("upload_id", uuidStr())),
+
+		"ExecutorLeadSubmittedResponse": obj(req("lead_id", uuidStr()), req("status", leadStatusSchema()), req("message", str("Human-readable submission message."))),
+		"ExecutorLeadListResponse":      listSchema("ExecutorLeadView"),
+		"ExecutorLeadView": obj(
+			req("id", uuidStr()),
+			req("email", str("Executor email.")),
+			req("first_name", str("First name.")),
+			req("last_name", str("Last name.")),
+			prop("middle_name", str("Middle name.")),
+			req("iin", str("Kazakhstan IIN, 12 digits.")),
+			req("phone", str("Phone.")),
+			req("city", str("City.")),
+			req("experience_level", str("Experience level label.")),
+			req("specializations", arr(str("Specialization."))),
+			req("education", str("Education, certificates and courses.")),
+			prop("work_format", str("Preferred work format.")),
+			prop("hourly_rate", num("Hourly rate in KZT.")),
+			req("about", str("About executor.")),
+			req("terms_accepted", boolProp("Terms acceptance.")),
+			req("status", leadStatusSchema()),
+			req("priority", intProp("0 normal, 1 high, 2 urgent.")),
+			prop("notes", str("Admin notes.")),
+			prop("rejection_reason", str("Rejection reason.")),
+			req("submitted_at", dateTime()),
+			prop("reviewed_at", dateTime()),
+			prop("reviewed_by", uuidStr()),
+			prop("converted_at", dateTime()),
+			prop("converted_user_id", uuidStr()),
+			req("created_at", dateTime()),
+			req("updated_at", dateTime()),
+			prop("documents", arr(ref("ExecutorLeadDocument"))),
+		),
+		"ExecutorLeadDocument":    obj(req("id", uuidStr()), req("document_type", enumStr("identity", "education", "ip_registration", "other")), req("url", str("Public local URL.")), req("original_name", str("Original filename.")), req("mime_type", str("Detected MIME type.")), req("size_bytes", intProp("File size in bytes.")), req("created_at", dateTime())),
+		"UpdateLeadStatusRequest": obj(req("status", enumStr("new", "in_review", "approved")), prop("notes", str("Admin notes."))),
+		"ApproveLeadRequest":      obj(prop("notes", str("Admin notes."))),
+		"RejectLeadRequest":       obj(req("reason", str("Rejection reason."))),
+		"ApproveLeadResponse":     obj(req("status", str("converted")), req("user_id", uuidStr())),
 
 		"UploadView": obj(
 			req("id", uuidStr()),
@@ -453,6 +501,37 @@ func multipartFilesBody() map[string]any {
 	}
 }
 
+func executorLeadMultipartBody() map[string]any {
+	binary := map[string]any{"type": "string", "format": "binary"}
+	return map[string]any{
+		"required": true,
+		"content": map[string]any{
+			"multipart/form-data": map[string]any{
+				"schema": obj(
+					req("email", str("Executor email.")),
+					req("password", str("Password.")),
+					req("first_name", str("First name.")),
+					req("last_name", str("Last name.")),
+					prop("middle_name", str("Middle name.")),
+					req("iin", str("Kazakhstan IIN, 12 digits.")),
+					req("phone", str("Phone.")),
+					req("city", str("City.")),
+					req("experience_level", str("Experience level, for example 3-5.")),
+					req("specializations", arr(str("Specialization values or send as JSON array string."))),
+					req("education", str("Education and certificates.")),
+					prop("work_format", str("Preferred work format.")),
+					prop("hourly_rate", num("Hourly rate in KZT.")),
+					req("about", str("About executor.")),
+					req("terms_accepted", boolProp("Must be true.")),
+					req("identity_document", binary),
+					req("education_document", binary),
+					prop("ip_registration_document", binary),
+				),
+			},
+		},
+	}
+}
+
 func path(name, schemaType, description string) map[string]any {
 	return param(name, "path", schemaType, true, description)
 }
@@ -531,6 +610,14 @@ func enumStr(values ...string) map[string]any {
 
 func targetTypeSchema() map[string]any {
 	return enumStr("profile_document", "order_attachment", "response_attachment", "review_attachment", "chat_attachment", "course_material")
+}
+
+func verificationStatusSchema() map[string]any {
+	return enumStr("none", "pending", "in_review", "verified", "rejected")
+}
+
+func leadStatusSchema() map[string]any {
+	return enumStr("new", "in_review", "approved", "rejected", "converted")
 }
 
 func intProp(description string) map[string]any {

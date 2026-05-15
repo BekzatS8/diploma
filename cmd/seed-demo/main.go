@@ -124,13 +124,14 @@ type dbPool interface {
 
 func upsertUser(ctx context.Context, tx pgx.Tx, id, email, hash, role string) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO users(id, email, password_hash, role, is_active)
-		VALUES($1,$2,$3,$4,TRUE)
+		INSERT INTO users(id, email, password_hash, role, is_active, verification_status)
+		VALUES($1,$2,$3,$4,TRUE,'verified')
 		ON CONFLICT (id) DO UPDATE
 		SET email=EXCLUDED.email,
 			password_hash=EXCLUDED.password_hash,
 			role=EXCLUDED.role,
 			is_active=TRUE,
+			verification_status='verified',
 			updated_at=NOW()
 	`, id, email, hash, role)
 	return err
@@ -140,7 +141,7 @@ func upsertProfiles(ctx context.Context, tx pgx.Tx) error {
 	if _, err := tx.Exec(ctx, `INSERT INTO client_profiles(user_id, company_name, about) VALUES($1,$2,$3) ON CONFLICT (user_id) DO UPDATE SET company_name=EXCLUDED.company_name, about=EXCLUDED.about, updated_at=NOW()`, demoClientID, "Demo Client LLC", "Demo client profile"); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO executor_profiles(user_id, display_name, bio, years_experience, rating_avg, rating_count, completed_orders, sanction_points) VALUES($1,$2,$3,3,4.50,2,1,0) ON CONFLICT (user_id) DO UPDATE SET display_name=EXCLUDED.display_name, bio=EXCLUDED.bio, years_experience=EXCLUDED.years_experience, updated_at=NOW()`, demoExecutorID, "Demo Executor", "Handles bookkeeping tasks"); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO executor_profiles(user_id, display_name, bio, years_experience, rating_avg, rating_count, completed_orders, sanction_points, verification_status, verified_at) VALUES($1,$2,$3,3,4.50,2,1,0,'verified',NOW()) ON CONFLICT (user_id) DO UPDATE SET display_name=EXCLUDED.display_name, bio=EXCLUDED.bio, years_experience=EXCLUDED.years_experience, verification_status='verified', verified_at=COALESCE(executor_profiles.verified_at, NOW()), updated_at=NOW()`, demoExecutorID, "Demo Executor", "Handles bookkeeping tasks"); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO coach_profiles(user_id, display_name, bio, expertise) VALUES($1,$2,$3,$4) ON CONFLICT (user_id) DO UPDATE SET display_name=EXCLUDED.display_name, bio=EXCLUDED.bio, expertise=EXCLUDED.expertise, updated_at=NOW()`, demoCoachID, "Demo Coach", "Finance educator", "Tax and compliance"); err != nil {
