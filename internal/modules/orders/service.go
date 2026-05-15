@@ -16,6 +16,7 @@ var (
 	ErrInvalidRole             = errors.New("invalid role")
 	ErrInvalidInput            = errors.New("invalid input")
 	ErrInvalidStatusTransition = errors.New("invalid status transition")
+	ErrInsufficientBalance     = errors.New("insufficient balance")
 )
 
 type Service struct {
@@ -48,6 +49,8 @@ func (s *Service) Create(ctx context.Context, userID, role string, req CreateOrd
 	if req.Currency != nil && strings.TrimSpace(*req.Currency) != "" {
 		currency = strings.ToUpper(strings.TrimSpace(*req.Currency))
 	}
+	region := normalizeString(req.Region)
+	promotions := normalizePromotions(req.Promotions)
 
 	order, err := s.repo.Create(ctx, CreateOrderParams{
 		ClientID:     userID,
@@ -56,6 +59,9 @@ func (s *Service) Create(ctx context.Context, userID, role string, req CreateOrd
 		Description:  strings.TrimSpace(req.Description),
 		BudgetAmount: req.BudgetAmount,
 		Currency:     currency,
+		DeadlineAt:   req.DeadlineAt,
+		Region:       region,
+		Promotions:   promotions,
 	})
 	if err != nil {
 		return Order{}, err
@@ -132,6 +138,8 @@ func (s *Service) UpdateDraft(ctx context.Context, userID, role, id string, req 
 			return Order{}, ErrInvalidInput
 		}
 	}
+	req.Region = normalizeString(req.Region)
+	req.Promotions = normalizePromotions(req.Promotions)
 
 	updated, err := s.repo.UpdateDraft(ctx, id, userID, UpdateOrderParams{
 		Title:        req.Title,
@@ -139,6 +147,9 @@ func (s *Service) UpdateDraft(ctx context.Context, userID, role, id string, req 
 		CategoryID:   catID,
 		BudgetAmount: req.BudgetAmount,
 		Currency:     req.Currency,
+		DeadlineAt:   req.DeadlineAt,
+		Region:       req.Region,
+		Promotions:   req.Promotions,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -184,23 +195,20 @@ func (s *Service) Submit(ctx context.Context, userID, role, id string) (Order, P
 		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrInvalidInput
 	}
 
-	amountCents := int64(s.postingFee * 100)
-	charge, err := s.paymentProvider.CreateCharge(ctx, payments.ChargeRequest{
-		OrderID:      order.ID,
-		AmountCents:  amountCents,
-		CurrencyCode: s.defaultCurrency,
-		Description:  "Order posting fee",
-	})
-	if err != nil {
-		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, err
-	}
-
-	updated, tx, err := s.repo.SubmitWithPayment(ctx, id, userID, s.postingFee, s.defaultCurrency, s.paymentProviderName, charge.TransactionID, charge.RedirectURL)
+	promotionFee := promotionFee(order.PromotionOptions)
+	escrowAmount := order.BudgetAmount
+	totalCharge := s.postingFee + promotionFee + escrowAmount
+	updated, tx, err := s.repo.SubmitWithWallet(ctx, id, userID, s.postingFee, promotionFee, escrowAmount, totalCharge, s.defaultCurrency, order.PromotionOptions)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrOrderNotFound
 		}
 		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, err
+	}
+	charge := payments.ChargeResponse{
+		TransactionID: tx.ProviderTransactionIDValue(),
+		RedirectURL:   "",
+		Status:        tx.Status,
 	}
 	return updated, tx, charge, nil
 }
@@ -269,4 +277,64 @@ func (s *Service) enrichCategory(ctx context.Context, o Order) (Order, error) {
 		return o, nil
 	}
 	return full, nil
+}
+
+func normalizeString(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*v)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func normalizePromotions(items []string) []string {
+	if items == nil {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	seen := map[string]struct{}{}
+	for _, item := range items {
+		key := strings.TrimSpace(strings.ToLower(item))
+		switch key {
+		case "top", "promotion_top", "raise_top":
+			key = "top"
+		case "pin", "pinned", "promotion_pin":
+			key = "pin"
+		case "highlight", "highlighted", "promotion_highlight":
+			key = "highlight"
+		default:
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
+}
+
+func promotionFee(items []string) float64 {
+	total := 0.0
+	for _, item := range items {
+		switch item {
+		case "top":
+			total += 1000
+		case "pin":
+			total += 1500
+		case "highlight":
+			total += 500
+		}
+	}
+	return total
+}
+
+func (t PaymentTransaction) ProviderTransactionIDValue() string {
+	if t.ProviderTransactionID == nil {
+		return ""
+	}
+	return *t.ProviderTransactionID
 }

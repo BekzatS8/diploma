@@ -23,6 +23,7 @@ import (
 	reviewsmodule "buhpro/internal/modules/reviews"
 	selectionmodule "buhpro/internal/modules/selection"
 	uploadsmodule "buhpro/internal/modules/uploads"
+	walletsmodule "buhpro/internal/modules/wallets"
 	"buhpro/internal/platform/metrics"
 
 	"github.com/gin-contrib/cors"
@@ -48,6 +49,7 @@ type Deps struct {
 	UploadsHandler       *uploadsmodule.Handler
 	AttachmentsHandler   *attachmentsmodule.Handler
 	LeadsHandler         *leadsmodule.Handler
+	WalletsHandler       *walletsmodule.Handler
 	Metrics              *metrics.Metrics
 }
 
@@ -107,6 +109,15 @@ func New(deps Deps) *gin.Engine {
 		myFilesGroup := v1.Group("/my/files")
 		myFilesGroup.Use(middleware.RequireAuth(deps.JWTManager))
 		myFilesGroup.GET("", deps.UploadsHandler.ListMy)
+
+		myWalletGroup := v1.Group("/my/wallet")
+		myWalletGroup.Use(middleware.RequireAuth(deps.JWTManager))
+		myWalletGroup.GET("", deps.WalletsHandler.MyWallet)
+
+		adminWalletsGroup := v1.Group("/admin/wallets")
+		adminWalletsGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
+		adminWalletsGroup.GET("/:userId", deps.WalletsHandler.AdminGet)
+		adminWalletsGroup.POST("/:userId/credit", deps.WalletsHandler.AdminCredit)
 
 		attachmentsGroup := v1.Group("/attachments")
 		attachmentsGroup.GET("", deps.AttachmentsHandler.List)

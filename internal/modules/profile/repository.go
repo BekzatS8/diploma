@@ -19,24 +19,42 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 }
 
 func (r *Repository) GetByRole(ctx context.Context, userID, role string) (map[string]any, error) {
+	base := map[string]any{}
+	var email string
+	var createdAt string
+	if err := r.db.QueryRow(ctx, `SELECT email, created_at::text FROM users WHERE id=$1`, userID).Scan(&email, &createdAt); err == nil {
+		base["email"] = email
+		base["platform_joined_at"] = createdAt
+	}
+
 	switch role {
 	case "client":
-		var companyName, taxNumber, phone, about, clientType, contactName, contactPosition, address *string
+		var companyName, taxNumber, phone, about, clientType, contactName, contactPosition, address, website *string
 		var avatarUploadID *string
 		err := r.db.QueryRow(ctx, `
-			SELECT company_name, tax_number, phone, about, client_type, contact_name, contact_position, address, avatar_upload_id::text
+			SELECT company_name, tax_number, phone, about, client_type, contact_name, contact_position, address, website, avatar_upload_id::text
 			FROM client_profiles WHERE user_id=$1
-		`, userID).Scan(&companyName, &taxNumber, &phone, &about, &clientType, &contactName, &contactPosition, &address, &avatarUploadID)
+		`, userID).Scan(&companyName, &taxNumber, &phone, &about, &clientType, &contactName, &contactPosition, &address, &website, &avatarUploadID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return map[string]any{}, nil
+				return base, nil
 			}
 			return nil, err
 		}
-		return map[string]any{"company_name": companyName, "tax_number": taxNumber, "phone": phone, "about": about, "client_type": clientType, "contact_name": contactName, "contact_position": contactPosition, "address": address, "avatar_upload_id": avatarUploadID}, nil
+		base["company_name"] = companyName
+		base["tax_number"] = taxNumber
+		base["phone"] = phone
+		base["about"] = about
+		base["client_type"] = clientType
+		base["contact_name"] = contactName
+		base["contact_position"] = contactPosition
+		base["address"] = address
+		base["website"] = website
+		base["avatar_upload_id"] = avatarUploadID
+		return base, nil
 	case "executor":
-		var displayName, bio, firstName, lastName, middleName, iin, phone, city, experienceLevel, education, workFormat, about, verificationStatus, rejectionReason *string
-		var years int
+		var displayName, bio, firstName, lastName, middleName, iin, phone, city, experienceLevel, education, workFormat, about, verificationStatus, rejectionReason, website *string
+		var years, profileViews, responseRate int
 		var hourlyRate *float64
 		var verifiedAt, rejectedAt *string
 		var specializations []byte
@@ -46,16 +64,16 @@ func (r *Repository) GetByRole(ctx context.Context, userID, role string) (map[st
 			       first_name, last_name, middle_name, iin, phone, city, experience_level,
 			       specializations, education, work_format, hourly_rate, about,
 			       verification_status, verified_at::text, rejected_at::text, rejection_reason,
-			       avatar_upload_id::text
+			       website, profile_views, response_rate, avatar_upload_id::text
 			FROM executor_profiles WHERE user_id=$1
 		`, userID).Scan(&displayName, &bio, &years,
 			&firstName, &lastName, &middleName, &iin, &phone, &city, &experienceLevel,
 			&specializations, &education, &workFormat, &hourlyRate, &about,
 			&verificationStatus, &verifiedAt, &rejectedAt, &rejectionReason,
-			&avatarUploadID)
+			&website, &profileViews, &responseRate, &avatarUploadID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return map[string]any{}, nil
+				return base, nil
 			}
 			return nil, err
 		}
@@ -66,26 +84,46 @@ func (r *Repository) GetByRole(ctx context.Context, userID, role string) (map[st
 		if specs == nil {
 			specs = []string{}
 		}
-		return map[string]any{
-			"profile_name": displayName, "bio": bio, "years_experience": years,
-			"first_name": firstName, "last_name": lastName, "middle_name": middleName,
-			"iin": iin, "phone": phone, "city": city, "experience_level": experienceLevel,
-			"specializations": specs, "education": education, "work_format": workFormat,
-			"hourly_rate": hourlyRate, "about": about, "verification_status": verificationStatus,
-			"verified_at": verifiedAt, "rejected_at": rejectedAt, "rejection_reason": rejectionReason,
-			"avatar_upload_id": avatarUploadID,
-		}, nil
+		base["profile_name"] = displayName
+		base["bio"] = bio
+		base["years_experience"] = years
+		base["first_name"] = firstName
+		base["last_name"] = lastName
+		base["middle_name"] = middleName
+		base["iin"] = iin
+		base["phone"] = phone
+		base["city"] = city
+		base["experience_level"] = experienceLevel
+		base["specializations"] = specs
+		base["education"] = education
+		base["work_format"] = workFormat
+		base["hourly_rate"] = hourlyRate
+		base["about"] = about
+		base["verification_status"] = verificationStatus
+		base["verified_at"] = verifiedAt
+		base["rejected_at"] = rejectedAt
+		base["rejection_reason"] = rejectionReason
+		base["website"] = website
+		base["profile_views"] = profileViews
+		base["response_rate"] = responseRate
+		base["avatar_upload_id"] = avatarUploadID
+		return base, nil
 	case "coach":
-		var displayName, bio, expertise *string
+		var displayName, bio, expertise, website *string
 		var avatarUploadID *string
-		err := r.db.QueryRow(ctx, `SELECT display_name, bio, expertise, avatar_upload_id::text FROM coach_profiles WHERE user_id=$1`, userID).Scan(&displayName, &bio, &expertise, &avatarUploadID)
+		err := r.db.QueryRow(ctx, `SELECT display_name, bio, expertise, website, avatar_upload_id::text FROM coach_profiles WHERE user_id=$1`, userID).Scan(&displayName, &bio, &expertise, &website, &avatarUploadID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return map[string]any{}, nil
+				return base, nil
 			}
 			return nil, err
 		}
-		return map[string]any{"profile_name": displayName, "bio": bio, "expertise": expertise, "avatar_upload_id": avatarUploadID}, nil
+		base["profile_name"] = displayName
+		base["bio"] = bio
+		base["expertise"] = expertise
+		base["website"] = website
+		base["avatar_upload_id"] = avatarUploadID
+		return base, nil
 	default:
 		return nil, fmt.Errorf("unsupported role")
 	}
@@ -134,9 +172,10 @@ func (r *Repository) PatchByRole(ctx context.Context, userID, role string, req U
 				contact_name = COALESCE($7, contact_name),
 				contact_position = COALESCE($8, contact_position),
 				address = COALESCE($9, address),
+				website = COALESCE($10, website),
 				updated_at = NOW()
 			WHERE user_id = $1
-		`, userID, req.CompanyName, req.Phone, req.About, req.ClientType, req.TaxNumber, req.ContactName, req.ContactPosition, req.Address)
+		`, userID, req.CompanyName, req.Phone, req.About, req.ClientType, req.TaxNumber, req.ContactName, req.ContactPosition, req.Address, req.Website)
 		return err
 	case "executor":
 		var specializationsJSON *string
@@ -165,11 +204,12 @@ func (r *Repository) PatchByRole(ctx context.Context, userID, role string, req U
 				work_format = COALESCE($14, work_format),
 				hourly_rate = COALESCE($15, hourly_rate),
 				about = COALESCE($16, about),
+				website = COALESCE($17, website),
 				updated_at = NOW()
 			WHERE user_id = $1
 		`, userID, req.ProfileName, req.Bio, req.YearsExperience,
 			req.FirstName, req.LastName, req.MiddleName, req.IIN, req.Phone, req.City,
-			req.ExperienceLevel, specializationsJSON, req.Education, req.WorkFormat, req.HourlyRate, req.About)
+			req.ExperienceLevel, specializationsJSON, req.Education, req.WorkFormat, req.HourlyRate, req.About, req.Website)
 		return err
 	case "coach":
 		_, err := r.db.Exec(ctx, `
@@ -177,11 +217,62 @@ func (r *Repository) PatchByRole(ctx context.Context, userID, role string, req U
 			SET display_name = COALESCE($2, display_name),
 				bio = COALESCE($3, bio),
 				expertise = COALESCE($4, expertise),
+				website = COALESCE($5, website),
 				updated_at = NOW()
 			WHERE user_id = $1
-		`, userID, req.ProfileName, req.Bio, req.Expertise)
+		`, userID, req.ProfileName, req.Bio, req.Expertise, req.Website)
 		return err
 	default:
 		return fmt.Errorf("unsupported role")
 	}
+}
+
+func (r *Repository) ListProfileDocuments(ctx context.Context, userID string) ([]ProfileDocument, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT a.id::text, a.upload_id::text, u.file_path, u.original_name, u.mime_type, u.size_bytes, a.metadata, a.created_at::text
+		FROM attachments a
+		JOIN uploads u ON u.id = a.upload_id
+		WHERE a.target_type='profile_document' AND a.target_id=$1::uuid
+		ORDER BY a.sort_order ASC, a.created_at ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ProfileDocument, 0)
+	for rows.Next() {
+		var item ProfileDocument
+		var filePath string
+		var metadata []byte
+		if err := rows.Scan(&item.ID, &item.UploadID, &filePath, &item.OriginalName, &item.MimeType, &item.SizeBytes, &metadata, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		item.URL = filePath
+		item.Metadata = map[string]any{}
+		if len(metadata) > 0 {
+			_ = json.Unmarshal(metadata, &item.Metadata)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) GetStats(ctx context.Context, userID, role string) (ProfileStats, error) {
+	stats := ProfileStats{Currency: "KZT"}
+	_ = r.db.QueryRow(ctx, `SELECT balance::float8, currency FROM wallets WHERE user_id=$1`, userID).Scan(&stats.Balance, &stats.Currency)
+
+	switch role {
+	case "client":
+		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE client_id=$1 AND deleted_at IS NULL`, userID).Scan(&stats.OrdersTotal)
+		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE client_id=$1 AND deleted_at IS NULL AND status IN ('published','in_progress','payment_pending')`, userID).Scan(&stats.OrdersActive)
+		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE client_id=$1 AND deleted_at IS NULL AND status='completed'`, userID).Scan(&stats.OrdersCompleted)
+		_ = r.db.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0)::float8 FROM wallet_transactions WHERE user_id=$1 AND direction='debit'`, userID).Scan(&stats.SpentTotal)
+	case "executor":
+		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE selected_executor_id=$1 AND deleted_at IS NULL`, userID).Scan(&stats.OrdersTotal)
+		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE selected_executor_id=$1 AND deleted_at IS NULL AND status='in_progress'`, userID).Scan(&stats.OrdersActive)
+		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE selected_executor_id=$1 AND deleted_at IS NULL AND status='completed'`, userID).Scan(&stats.OrdersCompleted)
+		_ = r.db.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0)::float8 FROM wallet_transactions WHERE user_id=$1 AND direction='credit' AND reason='order_completed'`, userID).Scan(&stats.EarnedTotal)
+		_ = r.db.QueryRow(ctx, `SELECT rating_avg::float8, rating_count, profile_views, response_rate FROM executor_profiles WHERE user_id=$1`, userID).Scan(&stats.RatingAvg, &stats.RatingCount, &stats.ProfileViews, &stats.ResponseRate)
+	}
+	return stats, nil
 }

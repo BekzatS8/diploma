@@ -159,7 +159,11 @@ func (r *Repository) transitionOrder(ctx context.Context, orderID, actorID, from
 	var current string
 	var selectedResponseID *string
 	var selectedExecutorID *string
-	if err := tx.QueryRow(ctx, `SELECT status, selected_response_id, selected_executor_id FROM orders WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, orderID).Scan(&current, &selectedResponseID, &selectedExecutorID); err != nil {
+	var budgetAmount float64
+	var currency string
+	var paymentStatus string
+	var executorPaidAt *string
+	if err := tx.QueryRow(ctx, `SELECT status, selected_response_id, selected_executor_id, budget_amount, currency, payment_status, executor_paid_at::text FROM orders WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, orderID).Scan(&current, &selectedResponseID, &selectedExecutorID, &budgetAmount, &currency, &paymentStatus, &executorPaidAt); err != nil {
 		return "", err
 	}
 	if current != fromStatus {
@@ -179,6 +183,30 @@ func (r *Repository) transitionOrder(ctx context.Context, orderID, actorID, from
 	}
 	if _, err := tx.Exec(ctx, `UPDATE orders SET status=$2, updated_at=NOW(), completed_at=CASE WHEN $2='completed' THEN NOW() ELSE completed_at END WHERE id=$1`, orderID, toStatus); err != nil {
 		return "", err
+	}
+	if toStatus == "completed" && selectedExecutorID != nil && executorPaidAt == nil && paymentStatus == "paid" {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO wallets(user_id, balance, currency)
+			VALUES($1, 0, $2)
+			ON CONFLICT (user_id) DO NOTHING
+		`, *selectedExecutorID, currency); err != nil {
+			return "", err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE wallets SET balance=balance+$2, updated_at=NOW()
+			WHERE user_id=$1
+		`, *selectedExecutorID, budgetAmount); err != nil {
+			return "", err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO wallet_transactions(user_id, amount, direction, currency, reason, order_id, created_by)
+			VALUES($1, $2, 'credit', $3, 'order_completed', $4, $5)
+		`, *selectedExecutorID, budgetAmount, currency, orderID, actorID); err != nil {
+			return "", err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE orders SET payment_status='released', executor_paid_at=NOW(), updated_at=NOW() WHERE id=$1`, orderID); err != nil {
+			return "", err
+		}
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO order_status_history(order_id, old_status, new_status, changed_by, reason) VALUES($1,$2,$3,$4,$5)`, orderID, current, toStatus, actorID, reason); err != nil {
 		return "", err

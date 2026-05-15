@@ -39,6 +39,7 @@ func (h *Handler) Register(c *gin.Context) {
 		ContactPosition: req.ContactPosition,
 		Address:         req.Address,
 		About:           req.About,
+		Website:         req.Website,
 		FirstName:       req.FirstName,
 		LastName:        req.LastName,
 		MiddleName:      req.MiddleName,

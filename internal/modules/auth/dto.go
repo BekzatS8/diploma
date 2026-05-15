@@ -12,6 +12,7 @@ type RegisterRequest struct {
 	ContactPosition string   `json:"contact_position"`
 	Address         string   `json:"address"`
 	About           string   `json:"about"`
+	Website         string   `json:"website"`
 	FirstName       string   `json:"first_name"`
 	LastName        string   `json:"last_name"`
 	MiddleName      string   `json:"middle_name"`

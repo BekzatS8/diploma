@@ -40,28 +40,36 @@ func (r *Repository) CreateUserWithProfile(ctx context.Context, user User, in Re
 		_, err = tx.Exec(ctx, `
 			INSERT INTO client_profiles (
 				user_id, company_name, phone, client_type, tax_number, contact_name,
-				contact_position, address, about
+				contact_position, address, about, website
 			)
-			VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''))
-		`, user.ID, firstNonEmpty(in.ProfileName, in.ContactName), in.Phone, in.ClientType, in.TaxNumber, in.ContactName, in.ContactPosition, in.Address, in.About)
+			VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''))
+		`, user.ID, firstNonEmpty(in.ProfileName, in.ContactName), in.Phone, in.ClientType, in.TaxNumber, in.ContactName, in.ContactPosition, in.Address, in.About, in.Website)
 	case "executor":
 		_, err = tx.Exec(ctx, `
 			INSERT INTO executor_profiles (
 				user_id, display_name, first_name, last_name, middle_name, iin, phone, city,
-				experience_level, education, work_format, hourly_rate, about, verification_status
+				experience_level, education, work_format, hourly_rate, about, website, verification_status
 			)
-			VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), $12, NULLIF($13, ''), 'pending')
-		`, user.ID, firstNonEmpty(in.ProfileName, strings.TrimSpace(in.FirstName+" "+in.LastName)), in.FirstName, in.LastName, in.MiddleName, in.IIN, in.Phone, in.City, in.ExperienceLevel, in.Education, in.WorkFormat, in.HourlyRate, in.About)
+			VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), $12, NULLIF($13, ''), NULLIF($14, ''), 'pending')
+		`, user.ID, firstNonEmpty(in.ProfileName, strings.TrimSpace(in.FirstName+" "+in.LastName)), in.FirstName, in.LastName, in.MiddleName, in.IIN, in.Phone, in.City, in.ExperienceLevel, in.Education, in.WorkFormat, in.HourlyRate, in.About, in.Website)
 	case "coach":
 		_, err = tx.Exec(ctx, `
-			INSERT INTO coach_profiles (user_id, display_name)
-			VALUES ($1, NULLIF($2, ''))
-		`, user.ID, in.ProfileName)
+			INSERT INTO coach_profiles (user_id, display_name, website)
+			VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
+		`, user.ID, in.ProfileName, in.Website)
 	default:
 		return ErrInvalidRole
 	}
 	if err != nil {
 		return fmt.Errorf("insert profile: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO wallets(user_id, balance, currency)
+		VALUES($1, 0, 'KZT')
+		ON CONFLICT (user_id) DO NOTHING
+	`, user.ID); err != nil {
+		return fmt.Errorf("insert wallet: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

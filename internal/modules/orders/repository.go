@@ -2,8 +2,10 @@ package orders
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,6 +26,9 @@ type CreateOrderParams struct {
 	Description  string
 	BudgetAmount float64
 	Currency     string
+	DeadlineAt   *time.Time
+	Region       *string
+	Promotions   []string
 }
 
 type UpdateOrderParams struct {
@@ -32,6 +37,9 @@ type UpdateOrderParams struct {
 	CategoryID   *int64
 	BudgetAmount *float64
 	Currency     *string
+	DeadlineAt   *time.Time
+	Region       *string
+	Promotions   []string
 }
 
 func (r *Repository) ResolveCategoryIDBySlug(ctx context.Context, slug string) (*int64, error) {
@@ -47,18 +55,23 @@ func (r *Repository) ResolveCategoryIDBySlug(ctx context.Context, slug string) (
 }
 
 func (r *Repository) Create(ctx context.Context, p CreateOrderParams) (Order, error) {
+	promotionsJSON, _ := json.Marshal(p.Promotions)
 	row := r.db.QueryRow(ctx, `
-		INSERT INTO orders (client_id, category_id, title, description, budget_amount, currency, status)
-		VALUES ($1, $2, $3, $4, $5, $6, 'draft')
-		RETURNING id, client_id, category_id, title, description, budget_amount, currency, status,
-		       selected_executor_id, published_at, completed_at, cancelled_at, created_at, updated_at, deleted_at
-	`, p.ClientID, p.CategoryID, p.Title, p.Description, p.BudgetAmount, p.Currency)
+		INSERT INTO orders (client_id, category_id, title, description, budget_amount, currency, deadline_at, region, promotion_options, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, 'draft')
+		RETURNING id, client_id, category_id, title, description, budget_amount, currency,
+		       deadline_at, region, promotion_options, posting_fee, promotion_fee, escrow_amount, total_charge, payment_status,
+		       promoted_until, pinned_until, highlighted_until, executor_paid_at,
+		       status, selected_executor_id, published_at, completed_at, cancelled_at, created_at, updated_at, deleted_at
+	`, p.ClientID, p.CategoryID, p.Title, p.Description, p.BudgetAmount, p.Currency, p.DeadlineAt, p.Region, string(promotionsJSON))
 	return scanOrder(row)
 }
 
 func (r *Repository) GetByID(ctx context.Context, id string) (Order, error) {
 	row := r.db.QueryRow(ctx, `
 		SELECT o.id, o.client_id, o.category_id, c.slug, c.name, o.title, o.description, o.budget_amount, o.currency,
+		       o.deadline_at, o.region, o.promotion_options, o.posting_fee, o.promotion_fee, o.escrow_amount, o.total_charge, o.payment_status,
+		       o.promoted_until, o.pinned_until, o.highlighted_until, o.executor_paid_at,
 		       o.status, o.selected_executor_id, o.published_at, o.completed_at, o.cancelled_at,
 		       o.created_at, o.updated_at, o.deleted_at
 		FROM orders o
@@ -71,6 +84,8 @@ func (r *Repository) GetByID(ctx context.Context, id string) (Order, error) {
 func (r *Repository) GetMyByID(ctx context.Context, id, clientID string) (Order, error) {
 	row := r.db.QueryRow(ctx, `
 		SELECT o.id, o.client_id, o.category_id, c.slug, c.name, o.title, o.description, o.budget_amount, o.currency,
+		       o.deadline_at, o.region, o.promotion_options, o.posting_fee, o.promotion_fee, o.escrow_amount, o.total_charge, o.payment_status,
+		       o.promoted_until, o.pinned_until, o.highlighted_until, o.executor_paid_at,
 		       o.status, o.selected_executor_id, o.published_at, o.completed_at, o.cancelled_at,
 		       o.created_at, o.updated_at, o.deleted_at
 		FROM orders o
@@ -100,6 +115,8 @@ func (r *Repository) ListMy(ctx context.Context, clientID string, q MyOrdersQuer
 	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
 	listSQL := fmt.Sprintf(`
 		SELECT o.id, o.client_id, o.category_id, c.slug, c.name, o.title, o.description, o.budget_amount, o.currency,
+		       o.deadline_at, o.region, o.promotion_options, o.posting_fee, o.promotion_fee, o.escrow_amount, o.total_charge, o.payment_status,
+		       o.promoted_until, o.pinned_until, o.highlighted_until, o.executor_paid_at,
 		       o.status, o.selected_executor_id, o.published_at, o.completed_at, o.cancelled_at,
 		       o.created_at, o.updated_at, o.deleted_at
 		FROM orders o
@@ -146,6 +163,16 @@ func (r *Repository) ListPublic(ctx context.Context, q PublicOrdersQuery) ([]Ord
 		args = append(args, *q.BudgetMax)
 		argPos++
 	}
+	if q.Region != "" {
+		where = append(where, fmt.Sprintf("(o.region = $%d OR o.region = 'online')", argPos))
+		args = append(args, q.Region)
+		argPos++
+	}
+	if q.DeadlineBefore != nil {
+		where = append(where, fmt.Sprintf("(o.deadline_at IS NULL OR o.deadline_at <= $%d)", argPos))
+		args = append(args, *q.DeadlineBefore)
+		argPos++
+	}
 	if q.Q != "" {
 		where = append(where, fmt.Sprintf("(o.title ILIKE $%d OR o.description ILIKE $%d)", argPos, argPos))
 		args = append(args, "%"+q.Q+"%")
@@ -166,12 +193,16 @@ func (r *Repository) ListPublic(ctx context.Context, q PublicOrdersQuery) ([]Ord
 	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
 	listSQL := fmt.Sprintf(`
 		SELECT o.id, o.client_id, o.category_id, c.slug, c.name, o.title, o.description, o.budget_amount, o.currency,
+		       o.deadline_at, o.region, o.promotion_options, o.posting_fee, o.promotion_fee, o.escrow_amount, o.total_charge, o.payment_status,
+		       o.promoted_until, o.pinned_until, o.highlighted_until, o.executor_paid_at,
 		       o.status, o.selected_executor_id, o.published_at, o.completed_at, o.cancelled_at,
 		       o.created_at, o.updated_at, o.deleted_at
 		FROM orders o
 		LEFT JOIN categories c ON c.id = o.category_id
 		WHERE %s
-		ORDER BY o.created_at DESC
+		ORDER BY (o.pinned_until IS NOT NULL AND o.pinned_until > NOW()) DESC,
+		         (o.promoted_until IS NOT NULL AND o.promoted_until > NOW()) DESC,
+		         o.created_at DESC
 		LIMIT $%d OFFSET $%d
 	`, whereSQL, argPos, argPos+1)
 	rows, err := r.db.Query(ctx, listSQL, args...)
@@ -192,6 +223,12 @@ func (r *Repository) ListPublic(ctx context.Context, q PublicOrdersQuery) ([]Ord
 }
 
 func (r *Repository) UpdateDraft(ctx context.Context, id, clientID string, p UpdateOrderParams) (Order, error) {
+	var promotionsJSON *string
+	if p.Promotions != nil {
+		raw, _ := json.Marshal(p.Promotions)
+		value := string(raw)
+		promotionsJSON = &value
+	}
 	row := r.db.QueryRow(ctx, `
 		UPDATE orders
 		SET title = COALESCE($3, title),
@@ -199,11 +236,16 @@ func (r *Repository) UpdateDraft(ctx context.Context, id, clientID string, p Upd
 		    category_id = COALESCE($5, category_id),
 		    budget_amount = COALESCE($6, budget_amount),
 		    currency = COALESCE($7, currency),
+		    deadline_at = COALESCE($8, deadline_at),
+		    region = COALESCE($9, region),
+		    promotion_options = COALESCE($10::jsonb, promotion_options),
 		    updated_at = NOW()
 		WHERE id = $1 AND client_id = $2 AND deleted_at IS NULL
-		RETURNING id, client_id, category_id, title, description, budget_amount, currency, status,
-		       selected_executor_id, published_at, completed_at, cancelled_at, created_at, updated_at, deleted_at
-	`, id, clientID, p.Title, p.Description, p.CategoryID, p.BudgetAmount, p.Currency)
+		RETURNING id, client_id, category_id, title, description, budget_amount, currency,
+		       deadline_at, region, promotion_options, posting_fee, promotion_fee, escrow_amount, total_charge, payment_status,
+		       promoted_until, pinned_until, highlighted_until, executor_paid_at,
+		       status, selected_executor_id, published_at, completed_at, cancelled_at, created_at, updated_at, deleted_at
+	`, id, clientID, p.Title, p.Description, p.CategoryID, p.BudgetAmount, p.Currency, p.DeadlineAt, p.Region, promotionsJSON)
 	return scanOrder(row)
 }
 
@@ -230,7 +272,7 @@ func (r *Repository) LatestPaymentByOrderID(ctx context.Context, orderID string)
 	return &t, nil
 }
 
-func (r *Repository) SubmitWithPayment(ctx context.Context, orderID, clientID string, amount float64, currency, provider string, chargeProviderRef string, chargeCheckoutURL string) (Order, PaymentTransaction, error) {
+func (r *Repository) SubmitWithWallet(ctx context.Context, orderID, clientID string, postingFee, promotionFee, escrowAmount, totalCharge float64, currency string, promotions []string) (Order, PaymentTransaction, error) {
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Order{}, PaymentTransaction{}, err
@@ -239,6 +281,7 @@ func (r *Repository) SubmitWithPayment(ctx context.Context, orderID, clientID st
 
 	var currentStatus string
 	var selectedExecutorID *string
+	var walletBalance float64
 	currentRow := tx.QueryRow(ctx, `
 		SELECT status, selected_executor_id
 		FROM orders
@@ -252,14 +295,52 @@ func (r *Repository) SubmitWithPayment(ctx context.Context, orderID, clientID st
 	if currentStatus != "draft" {
 		return Order{}, PaymentTransaction{}, ErrInvalidStatusTransition
 	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO wallets(user_id, balance, currency)
+		VALUES($1, 0, $2)
+		ON CONFLICT (user_id) DO NOTHING
+	`, clientID, currency); err != nil {
+		return Order{}, PaymentTransaction{}, err
+	}
+	if err := tx.QueryRow(ctx, `SELECT balance::float8 FROM wallets WHERE user_id=$1 FOR UPDATE`, clientID).Scan(&walletBalance); err != nil {
+		return Order{}, PaymentTransaction{}, err
+	}
+	if walletBalance < totalCharge {
+		return Order{}, PaymentTransaction{}, ErrInsufficientBalance
+	}
+
+	var promotedUntil, pinnedUntil, highlightedUntil any
+	now := time.Now()
+	for _, p := range promotions {
+		switch p {
+		case "top", "promotion_top", "raise_top":
+			promotedUntil = now.Add(72 * time.Hour)
+		case "pin", "pinned", "promotion_pin":
+			pinnedUntil = now.Add(30 * 24 * time.Hour)
+		case "highlight", "highlighted", "promotion_highlight":
+			highlightedUntil = now.Add(30 * 24 * time.Hour)
+		}
+	}
 
 	row := tx.QueryRow(ctx, `
 		UPDATE orders
-		SET status = 'payment_pending', updated_at = NOW()
+		SET status = 'published',
+		    published_at = COALESCE(published_at, NOW()),
+		    posting_fee = $2,
+		    promotion_fee = $3,
+		    escrow_amount = $4,
+		    total_charge = $5,
+		    payment_status = 'paid',
+		    promoted_until = $6,
+		    pinned_until = $7,
+		    highlighted_until = $8,
+		    updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, client_id, category_id, title, description, budget_amount, currency, status,
-		       selected_executor_id, published_at, completed_at, cancelled_at, created_at, updated_at, deleted_at
-	`, orderID)
+		RETURNING id, client_id, category_id, title, description, budget_amount, currency,
+		       deadline_at, region, promotion_options, posting_fee, promotion_fee, escrow_amount, total_charge, payment_status,
+		       promoted_until, pinned_until, highlighted_until, executor_paid_at,
+		       status, selected_executor_id, published_at, completed_at, cancelled_at, created_at, updated_at, deleted_at
+	`, orderID, postingFee, promotionFee, escrowAmount, totalCharge, promotedUntil, pinnedUntil, highlightedUntil)
 	updated, err := scanOrder(row)
 	if err != nil {
 		return Order{}, PaymentTransaction{}, err
@@ -267,20 +348,33 @@ func (r *Repository) SubmitWithPayment(ctx context.Context, orderID, clientID st
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO order_status_history (order_id, old_status, new_status, changed_by, reason)
-		VALUES ($1, $2, 'payment_pending', $3, $4)
-	`, orderID, currentStatus, clientID, "order submitted"); err != nil {
+		VALUES ($1, $2, 'published', $3, $4)
+	`, orderID, currentStatus, clientID, "paid from internal wallet"); err != nil {
+		return Order{}, PaymentTransaction{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE wallets
+		SET balance=balance-$2, updated_at=NOW()
+		WHERE user_id=$1
+	`, clientID, totalCharge); err != nil {
+		return Order{}, PaymentTransaction{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO wallet_transactions(user_id, amount, direction, currency, reason, order_id, created_by, metadata)
+		VALUES($1, $2, 'debit', $3, 'order_submit', $4, $1, jsonb_build_object('posting_fee',$5,'promotion_fee',$6,'escrow_amount',$7))
+	`, clientID, totalCharge, currency, orderID, postingFee, promotionFee, escrowAmount); err != nil {
 		return Order{}, PaymentTransaction{}, err
 	}
 
 	payRow := tx.QueryRow(ctx, `
 		INSERT INTO payment_transactions (
 			user_id, object_type, object_id, order_id, provider, provider_transaction_id,
-			amount, currency, status, metadata
+			amount, currency, status, paid_at, metadata
 		)
-		VALUES ($1, 'order_posting', $2, $2, $3, $4, $5, $6, 'pending', $7::jsonb)
+		VALUES ($1, 'order_posting', $2, $2, 'internal_wallet', $3, $4, $5, 'succeeded', NOW(), $6::jsonb)
 		RETURNING id, order_id, provider, provider_transaction_id, amount, currency, status, initiated_at
-	`, clientID, orderID, provider, chargeProviderRef, amount, currency,
-		fmt.Sprintf(`{"checkout_url":%q}`, chargeCheckoutURL),
+	`, clientID, orderID, "wallet-"+orderID, totalCharge, currency,
+		fmt.Sprintf(`{"posting_fee":%v,"promotion_fee":%v,"escrow_amount":%v}`, postingFee, promotionFee, escrowAmount),
 	)
 	var payment PaymentTransaction
 	if err := payRow.Scan(&payment.ID, &payment.OrderID, &payment.Provider, &payment.ProviderTransactionID, &payment.Amount, &payment.Currency, &payment.Status, &payment.InitiatedAt); err != nil {
@@ -322,8 +416,10 @@ func (r *Repository) Cancel(ctx context.Context, orderID, clientID, reason strin
 		UPDATE orders
 		SET status='cancelled', cancelled_at = NOW(), updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, client_id, category_id, title, description, budget_amount, currency, status,
-		       selected_executor_id, published_at, completed_at, cancelled_at, created_at, updated_at, deleted_at
+		RETURNING id, client_id, category_id, title, description, budget_amount, currency,
+		       deadline_at, region, promotion_options, posting_fee, promotion_fee, escrow_amount, total_charge, payment_status,
+		       promoted_until, pinned_until, highlighted_until, executor_paid_at,
+		       status, selected_executor_id, published_at, completed_at, cancelled_at, created_at, updated_at, deleted_at
 	`, orderID)
 	updated, err := scanOrder(row)
 	if err != nil {
@@ -345,6 +441,7 @@ func (r *Repository) Cancel(ctx context.Context, orderID, clientID, reason strin
 
 func scanOrder(row pgx.Row) (Order, error) {
 	var o Order
+	var promotions []byte
 	err := row.Scan(
 		&o.ID,
 		&o.ClientID,
@@ -353,6 +450,18 @@ func scanOrder(row pgx.Row) (Order, error) {
 		&o.Description,
 		&o.BudgetAmount,
 		&o.Currency,
+		&o.DeadlineAt,
+		&o.Region,
+		&promotions,
+		&o.PostingFee,
+		&o.PromotionFee,
+		&o.EscrowAmount,
+		&o.TotalCharge,
+		&o.PaymentStatus,
+		&o.PromotedUntil,
+		&o.PinnedUntil,
+		&o.HighlightedUntil,
+		&o.ExecutorPaidAt,
 		&o.Status,
 		&o.SelectedExecutorID,
 		&o.PublishedAt,
@@ -362,11 +471,18 @@ func scanOrder(row pgx.Row) (Order, error) {
 		&o.UpdatedAt,
 		&o.DeletedAt,
 	)
+	if len(promotions) > 0 {
+		_ = json.Unmarshal(promotions, &o.PromotionOptions)
+	}
+	if o.PromotionOptions == nil {
+		o.PromotionOptions = []string{}
+	}
 	return o, err
 }
 
 func scanOrderWithCategory(row interface{ Scan(dest ...any) error }) (Order, error) {
 	var o Order
+	var promotions []byte
 	err := row.Scan(
 		&o.ID,
 		&o.ClientID,
@@ -377,6 +493,18 @@ func scanOrderWithCategory(row interface{ Scan(dest ...any) error }) (Order, err
 		&o.Description,
 		&o.BudgetAmount,
 		&o.Currency,
+		&o.DeadlineAt,
+		&o.Region,
+		&promotions,
+		&o.PostingFee,
+		&o.PromotionFee,
+		&o.EscrowAmount,
+		&o.TotalCharge,
+		&o.PaymentStatus,
+		&o.PromotedUntil,
+		&o.PinnedUntil,
+		&o.HighlightedUntil,
+		&o.ExecutorPaidAt,
 		&o.Status,
 		&o.SelectedExecutorID,
 		&o.PublishedAt,
@@ -386,5 +514,11 @@ func scanOrderWithCategory(row interface{ Scan(dest ...any) error }) (Order, err
 		&o.UpdatedAt,
 		&o.DeletedAt,
 	)
+	if len(promotions) > 0 {
+		_ = json.Unmarshal(promotions, &o.PromotionOptions)
+	}
+	if o.PromotionOptions == nil {
+		o.PromotionOptions = []string{}
+	}
 	return o, err
 }

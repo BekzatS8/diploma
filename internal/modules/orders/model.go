@@ -12,6 +12,18 @@ type Order struct {
 	Description        string
 	BudgetAmount       float64
 	Currency           string
+	DeadlineAt         *time.Time
+	Region             *string
+	PromotionOptions   []string
+	PostingFee         float64
+	PromotionFee       float64
+	EscrowAmount       float64
+	TotalCharge        float64
+	PaymentStatus      string
+	PromotedUntil      *time.Time
+	PinnedUntil        *time.Time
+	HighlightedUntil   *time.Time
+	ExecutorPaidAt     *time.Time
 	Status             string
 	SelectedExecutorID *string
 	PublishedAt        *time.Time

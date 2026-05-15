@@ -193,6 +193,7 @@ func (h *Handler) ListPublic(c *gin.Context) {
 		BudgetMax:      budgetMax,
 		DeadlineBefore: deadlineBefore,
 		Q:              strings.TrimSpace(c.Query("q")),
+		Region:         strings.TrimSpace(c.Query("region")),
 		Page:           parseIntDefault(c.Query("page"), 1),
 		PageSize:       parseIntDefault(c.Query("page_size"), 20),
 	}
@@ -236,6 +237,8 @@ func (h *Handler) handleError(c *gin.Context, err error) {
 		response.JSONError(c, http.StatusConflict, "invalid_status_transition", "Invalid status transition")
 	case errors.Is(err, ErrInvalidInput):
 		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid order data")
+	case errors.Is(err, ErrInsufficientBalance):
+		response.JSONError(c, http.StatusConflict, "insufficient_balance", "Insufficient wallet balance")
 	default:
 		response.JSONError(c, http.StatusInternalServerError, "internal_error", "Internal server error")
 	}
@@ -243,19 +246,30 @@ func (h *Handler) handleError(c *gin.Context, err error) {
 
 func toOrderResponse(o Order, includeClient bool) OrderResponse {
 	res := OrderResponse{
-		ID:           o.ID,
-		CategoryID:   o.CategoryID,
-		CategorySlug: o.CategorySlug,
-		CategoryName: o.CategoryName,
-		Title:        o.Title,
-		Description:  o.Description,
-		BudgetAmount: o.BudgetAmount,
-		Currency:     o.Currency,
-		Status:       o.Status,
-		PublishedAt:  o.PublishedAt,
-		CancelledAt:  o.CancelledAt,
-		CreatedAt:    o.CreatedAt,
-		UpdatedAt:    o.UpdatedAt,
+		ID:               o.ID,
+		CategoryID:       o.CategoryID,
+		CategorySlug:     o.CategorySlug,
+		CategoryName:     o.CategoryName,
+		Title:            o.Title,
+		Description:      o.Description,
+		BudgetAmount:     o.BudgetAmount,
+		Currency:         o.Currency,
+		DeadlineAt:       o.DeadlineAt,
+		Region:           o.Region,
+		Promotions:       o.PromotionOptions,
+		PostingFee:       o.PostingFee,
+		PromotionFee:     o.PromotionFee,
+		EscrowAmount:     o.EscrowAmount,
+		TotalCharge:      o.TotalCharge,
+		PaymentStatus:    o.PaymentStatus,
+		PromotedUntil:    o.PromotedUntil,
+		PinnedUntil:      o.PinnedUntil,
+		HighlightedUntil: o.HighlightedUntil,
+		Status:           o.Status,
+		PublishedAt:      o.PublishedAt,
+		CancelledAt:      o.CancelledAt,
+		CreatedAt:        o.CreatedAt,
+		UpdatedAt:        o.UpdatedAt,
 	}
 	if includeClient {
 		res.ClientID = o.ClientID

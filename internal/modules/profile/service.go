@@ -30,6 +30,20 @@ func (s *Service) GetCurrentProfile(ctx context.Context, userID, role string) (m
 			}
 		}
 	}
+	docs, err := s.repo.ListProfileDocuments(ctx, userID)
+	if err == nil {
+		if s.uploads != nil {
+			for i := range docs {
+				docs[i].URL = s.uploads.URL(uploads.Upload{FilePath: docs[i].URL})
+			}
+		}
+		profile["documents"] = docs
+	}
+	stats, err := s.repo.GetStats(ctx, userID, role)
+	if err == nil {
+		profile["stats"] = stats
+		profile["achievements"] = achievementsFor(role, stats)
+	}
 	return profile, nil
 }
 
@@ -42,6 +56,10 @@ func (s *Service) UpdateCurrentProfile(ctx context.Context, userID, role string,
 		v := 0.0
 		req.HourlyRate = &v
 	}
+	req.Website = normalizeStringPtr(req.Website)
+	req.Phone = normalizeStringPtr(req.Phone)
+	req.About = normalizeStringPtr(req.About)
+	req.Bio = normalizeStringPtr(req.Bio)
 	if req.IIN != nil {
 		v := strings.TrimSpace(*req.IIN)
 		if v != "" && len(v) != 12 {
@@ -87,4 +105,57 @@ func normalizeSpecializations(items []string) []string {
 		out = append(out, trimmed)
 	}
 	return out
+}
+
+func normalizeStringPtr(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*v)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func achievementsFor(role string, stats ProfileStats) []ProfileAchievement {
+	items := make([]ProfileAchievement, 0)
+	if stats.OrdersCompleted > 0 {
+		items = append(items, ProfileAchievement{
+			Code:        "first_completed_order",
+			Title:       "First completed order",
+			Description: "At least one order has been completed.",
+		})
+	}
+	if role == "executor" {
+		if stats.RatingAvg >= 4.5 && stats.RatingCount > 0 {
+			items = append(items, ProfileAchievement{
+				Code:        "top_executor",
+				Title:       "Top executor",
+				Description: "Rating is 4.5 or higher.",
+			})
+		}
+		if stats.OrdersCompleted >= 10 {
+			items = append(items, ProfileAchievement{
+				Code:        "reliable_partner",
+				Title:       "Reliable partner",
+				Description: "10 or more completed orders.",
+			})
+		}
+		if stats.ResponseRate >= 80 {
+			items = append(items, ProfileAchievement{
+				Code:        "fast_response",
+				Title:       "Fast response",
+				Description: "Response rate is 80% or higher.",
+			})
+		}
+	}
+	if role == "client" && stats.SpentTotal > 0 {
+		items = append(items, ProfileAchievement{
+			Code:        "active_customer",
+			Title:       "Active customer",
+			Description: "Has paid for order placement or escrow.",
+		})
+	}
+	return items
 }

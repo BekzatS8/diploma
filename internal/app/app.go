@@ -29,6 +29,7 @@ import (
 	reviewsmodule "buhpro/internal/modules/reviews"
 	selectionmodule "buhpro/internal/modules/selection"
 	uploadsmodule "buhpro/internal/modules/uploads"
+	walletsmodule "buhpro/internal/modules/wallets"
 	"buhpro/internal/platform/db"
 	"buhpro/internal/platform/metrics"
 	"buhpro/internal/platform/payments"
@@ -115,6 +116,8 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	attachmentsService := attachmentsmodule.NewService(attachmentsRepo, uploadsService)
 	leadsRepo := leadsmodule.NewRepository(dbPool)
 	leadsService := leadsmodule.NewService(leadsRepo, storageProvider)
+	walletsRepo := walletsmodule.NewRepository(dbPool)
+	walletsService := walletsmodule.NewService(walletsRepo, cfg.Orders.DefaultCurrency)
 
 	if cfg.Bootstrap.EnableAdmin {
 		if err := authService.BootstrapAdmin(startupCtx, cfg.Bootstrap.AdminEmail, cfg.Bootstrap.AdminPassword); err != nil {
@@ -137,6 +140,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	uploadsHandler := uploadsmodule.NewHandler(uploadsService)
 	attachmentsHandler := attachmentsmodule.NewHandler(attachmentsService)
 	leadsHandler := leadsmodule.NewHandler(leadsService)
+	walletsHandler := walletsmodule.NewHandler(walletsService)
 
 	metricsCollector := metrics.New()
 	systemHandler := system.NewHandler(&readinessChecker{dbPool: dbPool, healthCheck: cfg.DB.HealthTimeout})
@@ -160,6 +164,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 		UploadsHandler:       uploadsHandler,
 		AttachmentsHandler:   attachmentsHandler,
 		LeadsHandler:         leadsHandler,
+		WalletsHandler:       walletsHandler,
 		Metrics:              metricsCollector,
 	})
 

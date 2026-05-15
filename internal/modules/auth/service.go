@@ -42,6 +42,7 @@ type RegisterInput struct {
 	ContactPosition string
 	Address         string
 	About           string
+	Website         string
 	FirstName       string
 	LastName        string
 	MiddleName      string
