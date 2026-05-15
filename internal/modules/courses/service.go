@@ -7,6 +7,7 @@ import (
 
 	notifications "buhpro/internal/modules/notifications"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -129,7 +130,11 @@ func (s *Service) AddMaterial(ctx context.Context, courseID, userID, role string
 	if _, _, err := s.GetCoachCourse(ctx, courseID, userID, role); err != nil {
 		return CourseMaterial{}, err
 	}
-	mt, err := validateMaterial(req.Type, req.URL, req.Content)
+	uploadID, err := normalizeUUIDNullable(req.UploadID)
+	if err != nil {
+		return CourseMaterial{}, ErrInvalidInput
+	}
+	mt, err := validateMaterial(req.Type, uploadID, req.URL, req.Content)
 	if err != nil {
 		return CourseMaterial{}, err
 	}
@@ -137,7 +142,7 @@ func (s *Service) AddMaterial(ctx context.Context, courseID, userID, role string
 	if req.Position != nil {
 		position = *req.Position
 	}
-	item, err := s.repo.CreateMaterial(ctx, CreateMaterialParams{CourseID: courseID, Title: strings.TrimSpace(req.Title), MaterialType: mt, URL: normalizeNullable(req.URL), Content: normalizeNullable(req.Content), SortOrder: position})
+	item, err := s.repo.CreateMaterial(ctx, CreateMaterialParams{CourseID: courseID, Title: strings.TrimSpace(req.Title), MaterialType: mt, UploadID: uploadID, URL: normalizeNullable(req.URL), Content: normalizeNullable(req.Content), SortOrder: position})
 	if err != nil {
 		return CourseMaterial{}, err
 	}
@@ -152,14 +157,18 @@ func (s *Service) UpdateMaterial(ctx context.Context, courseID, materialID, user
 		return CourseMaterial{}, err
 	}
 	var materialType *string
+	uploadID, err := normalizeUUIDNullable(req.UploadID)
+	if err != nil {
+		return CourseMaterial{}, ErrInvalidInput
+	}
 	if req.Type != nil {
-		mt, err := validateMaterial(*req.Type, req.URL, req.Content)
+		mt, err := validateMaterial(*req.Type, uploadID, req.URL, req.Content)
 		if err != nil {
 			return CourseMaterial{}, err
 		}
 		materialType = &mt
 	}
-	item, err := s.repo.UpdateMaterial(ctx, courseID, materialID, UpdateMaterialParams{Title: normalizeNullable(req.Title), MaterialType: materialType, URL: normalizeNullable(req.URL), Content: normalizeNullable(req.Content), SortOrder: req.Position})
+	item, err := s.repo.UpdateMaterial(ctx, courseID, materialID, UpdateMaterialParams{Title: normalizeNullable(req.Title), MaterialType: materialType, UploadID: uploadID, URL: normalizeNullable(req.URL), Content: normalizeNullable(req.Content), SortOrder: req.Position})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CourseMaterial{}, ErrNotFound
@@ -327,14 +336,25 @@ func normalizeNullable(v *string) *string {
 	return &t
 }
 
-func validateMaterial(materialType string, url, content *string) (string, error) {
+func normalizeUUIDNullable(v *string) (*string, error) {
+	value := normalizeNullable(v)
+	if value == nil {
+		return nil, nil
+	}
+	if _, err := uuid.Parse(*value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func validateMaterial(materialType string, uploadID, url, content *string) (string, error) {
 	t := strings.TrimSpace(strings.ToLower(materialType))
 	switch t {
 	case "video", "pdf", "link", "text":
 	default:
 		return "", ErrInvalidInput
 	}
-	if (t == "video" || t == "pdf" || t == "link") && normalizeNullable(url) == nil {
+	if (t == "video" || t == "pdf" || t == "link") && uploadID == nil && normalizeNullable(url) == nil {
 		return "", ErrInvalidInput
 	}
 	if t == "text" && normalizeNullable(content) == nil {

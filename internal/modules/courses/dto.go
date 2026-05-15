@@ -15,6 +15,7 @@ type UpdateCourseRequest struct {
 type CreateMaterialRequest struct {
 	Title    string  `json:"title" binding:"required,min=1,max=200"`
 	Type     string  `json:"type" binding:"required"`
+	UploadID *string `json:"upload_id"`
 	URL      *string `json:"url"`
 	Content  *string `json:"content"`
 	Position *int    `json:"position"`
@@ -23,6 +24,7 @@ type CreateMaterialRequest struct {
 type UpdateMaterialRequest struct {
 	Title    *string `json:"title"`
 	Type     *string `json:"type"`
+	UploadID *string `json:"upload_id"`
 	URL      *string `json:"url"`
 	Content  *string `json:"content"`
 	Position *int    `json:"position"`

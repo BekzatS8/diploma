@@ -28,6 +28,7 @@ type CreateMaterialParams struct {
 	CourseID     string
 	Title        string
 	MaterialType string
+	UploadID     *string
 	URL          *string
 	Content      *string
 	SortOrder    int
@@ -36,6 +37,7 @@ type CreateMaterialParams struct {
 type UpdateMaterialParams struct {
 	Title        *string
 	MaterialType *string
+	UploadID     *string
 	URL          *string
 	Content      *string
 	SortOrder    *int
@@ -159,12 +161,12 @@ func (r *Repository) TransitionCourseStatus(ctx context.Context, id, actorID, fr
 
 func (r *Repository) CreateMaterial(ctx context.Context, p CreateMaterialParams) (CourseMaterial, error) {
 	row := r.db.QueryRow(ctx, `
-		INSERT INTO course_materials(course_id, material_type, title, url, content, sort_order)
-		VALUES($1,$2,$3,$4,$5,$6)
-		RETURNING id, course_id, material_type, title, url, content, sort_order, created_at, updated_at
-	`, p.CourseID, p.MaterialType, p.Title, p.URL, p.Content, p.SortOrder)
+		INSERT INTO course_materials(course_id, material_type, title, upload_id, url, content, sort_order)
+		VALUES($1,$2,$3,$4,$5,$6,$7)
+		RETURNING id, course_id, material_type, title, upload_id::text, url, content, sort_order, created_at, updated_at
+	`, p.CourseID, p.MaterialType, p.Title, p.UploadID, p.URL, p.Content, p.SortOrder)
 	var m CourseMaterial
-	err := row.Scan(&m.ID, &m.CourseID, &m.MaterialType, &m.Title, &m.URL, &m.Content, &m.SortOrder, &m.CreatedAt, &m.UpdatedAt)
+	err := row.Scan(&m.ID, &m.CourseID, &m.MaterialType, &m.Title, &m.UploadID, &m.URL, &m.Content, &m.SortOrder, &m.CreatedAt, &m.UpdatedAt)
 	return m, err
 }
 
@@ -173,15 +175,16 @@ func (r *Repository) UpdateMaterial(ctx context.Context, courseID, materialID st
 		UPDATE course_materials SET
 			title=COALESCE($3,title),
 			material_type=COALESCE($4,material_type),
-			url=COALESCE($5,url),
-			content=COALESCE($6,content),
-			sort_order=COALESCE($7,sort_order),
+			upload_id=COALESCE($5,upload_id),
+			url=COALESCE($6,url),
+			content=COALESCE($7,content),
+			sort_order=COALESCE($8,sort_order),
 			updated_at=NOW()
 		WHERE id=$1 AND course_id=$2
-		RETURNING id, course_id, material_type, title, url, content, sort_order, created_at, updated_at
-	`, materialID, courseID, p.Title, p.MaterialType, p.URL, p.Content, p.SortOrder)
+		RETURNING id, course_id, material_type, title, upload_id::text, url, content, sort_order, created_at, updated_at
+	`, materialID, courseID, p.Title, p.MaterialType, p.UploadID, p.URL, p.Content, p.SortOrder)
 	var m CourseMaterial
-	err := row.Scan(&m.ID, &m.CourseID, &m.MaterialType, &m.Title, &m.URL, &m.Content, &m.SortOrder, &m.CreatedAt, &m.UpdatedAt)
+	err := row.Scan(&m.ID, &m.CourseID, &m.MaterialType, &m.Title, &m.UploadID, &m.URL, &m.Content, &m.SortOrder, &m.CreatedAt, &m.UpdatedAt)
 	return m, err
 }
 
@@ -197,7 +200,7 @@ func (r *Repository) DeleteMaterial(ctx context.Context, courseID, materialID st
 }
 
 func (r *Repository) ListMaterialsByCourse(ctx context.Context, courseID string) ([]CourseMaterial, error) {
-	rows, err := r.db.Query(ctx, `SELECT id, course_id, material_type, title, url, content, sort_order, created_at, updated_at FROM course_materials WHERE course_id=$1 ORDER BY sort_order ASC, created_at ASC`, courseID)
+	rows, err := r.db.Query(ctx, `SELECT id, course_id, material_type, title, upload_id::text, url, content, sort_order, created_at, updated_at FROM course_materials WHERE course_id=$1 ORDER BY sort_order ASC, created_at ASC`, courseID)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +208,7 @@ func (r *Repository) ListMaterialsByCourse(ctx context.Context, courseID string)
 	items := make([]CourseMaterial, 0)
 	for rows.Next() {
 		var m CourseMaterial
-		if err := rows.Scan(&m.ID, &m.CourseID, &m.MaterialType, &m.Title, &m.URL, &m.Content, &m.SortOrder, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.CourseID, &m.MaterialType, &m.Title, &m.UploadID, &m.URL, &m.Content, &m.SortOrder, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, m)

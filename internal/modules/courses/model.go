@@ -19,6 +19,7 @@ type CourseMaterial struct {
 	CourseID     string     `json:"course_id"`
 	MaterialType string     `json:"type"`
 	Title        string     `json:"title"`
+	UploadID     *string    `json:"upload_id,omitempty"`
 	URL          *string    `json:"url,omitempty"`
 	Content      *string    `json:"content,omitempty"`
 	SortOrder    int        `json:"position"`

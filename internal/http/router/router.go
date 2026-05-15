@@ -115,6 +115,12 @@ func New(deps Deps) *gin.Engine {
 		attachmentsGroup.PATCH("/reorder", deps.AttachmentsHandler.Reorder)
 		attachmentsGroup.DELETE("/:id", deps.AttachmentsHandler.Delete)
 
+		v1.GET("/reviews", deps.ReviewsHandler.ListByTarget)
+		v1.GET("/ratings", deps.ReviewsHandler.GetRatingSummary)
+		reviewsGroup := v1.Group("/reviews")
+		reviewsGroup.Use(middleware.RequireAuth(deps.JWTManager))
+		reviewsGroup.POST("", deps.ReviewsHandler.CreateEntity)
+
 		leadsGroup := v1.Group("/leads")
 		leadsGroup.POST("/executor", deps.LeadsHandler.SubmitExecutor)
 

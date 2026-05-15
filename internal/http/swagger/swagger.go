@@ -65,7 +65,7 @@ func Spec() map[string]any {
 			tag("Responses", "Executor paid responses and client response review."),
 			tag("Dev Payments", "Development-only payment confirmation/failure endpoints."),
 			tag("Selection & Lifecycle", "Client selection, completion and reopen flow."),
-			tag("Reviews", "Order review and public executor review history."),
+			tag("Reviews", "Order reviews plus generic target reviews and ratings."),
 			tag("Rating & Sanctions", "Executor rating and sanction administration."),
 			tag("Courses", "Coach/admin course management and executor assignments."),
 			tag("Notifications", "In-app notification read models."),
@@ -172,6 +172,11 @@ func paths() map[string]any {
 			getOp("Reviews", "Get order review", "Client/admin reads the review for an owned order.", true, []any{path("id", "string", "Order UUID.")}, nil, ok("Review")),
 			postOp("Reviews", "Create review", "Client/admin creates one review for a completed order and triggers rating/sanction recalculation.", true, []any{path("id", "string", "Order UUID.")}, body("CreateReviewRequest"), created("Review")),
 		),
+		"/api/v1/reviews": pathItem(
+			getOp("Reviews", "List target reviews", "Lists generic reviews attached to any supported target_type and target_id.", false, []any{query("target_type", "string", true, "Review target type."), query("target_id", "string", true, "Target UUID."), pageParam(), pageSizeParam()}, nil, listOK("EntityReviewsListResponse")),
+			postOp("Reviews", "Create target review", "Creates a generic one-to-many review for a target entity. Useful for orders, users, courses and future entities.", true, nil, body("CreateEntityReviewRequest"), created("EntityReview")),
+		),
+		"/api/v1/ratings":                        get("Reviews", "Target rating summary", "Returns aggregate rating for any supported target_type and target_id.", false, []any{query("target_type", "string", true, "Review target type."), query("target_id", "string", true, "Target UUID.")}, nil, ok("EntityRatingSummary")),
 		"/api/v1/executors/{executorId}/reviews": get("Reviews", "Executor reviews", "Public paginated reviews for an executor, newest first.", false, []any{path("executorId", "string", "Executor user UUID."), pageParam(), pageSizeParam()}, nil, listOK("ReviewsListResponse")),
 		"/api/v1/executors/{executorId}/rating":  get("Rating & Sanctions", "Executor rating", "Public rating summary for an executor.", false, []any{path("executorId", "string", "Executor user UUID.")}, nil, ok("RatingInfo")),
 		"/api/v1/my/sanctions":                   get("Rating & Sanctions", "My sanctions", "Executor/admin list of sanctions for the current user.", true, nil, nil, ok("SanctionsResponse")),
@@ -189,7 +194,7 @@ func paths() map[string]any {
 		),
 		"/api/v1/coach/courses/{id}/publish":   post("Courses", "Publish course", "Moves a draft course to published.", true, []any{path("id", "string", "Course UUID.")}, nil, ok("Course")),
 		"/api/v1/coach/courses/{id}/archive":   post("Courses", "Archive course", "Moves a published course to archived.", true, []any{path("id", "string", "Course UUID.")}, nil, ok("Course")),
-		"/api/v1/coach/courses/{id}/materials": post("Courses", "Create material", "Adds a material to a course. video/pdf/link require url; text requires content.", true, []any{path("id", "string", "Course UUID.")}, body("CreateMaterialRequest"), created("CourseMaterial")),
+		"/api/v1/coach/courses/{id}/materials": post("Courses", "Create material", "Adds a material to a course. video/pdf/link require url or upload_id; text requires content.", true, []any{path("id", "string", "Course UUID.")}, body("CreateMaterialRequest"), created("CourseMaterial")),
 		"/api/v1/coach/courses/{id}/materials/{materialId}": pathItem(
 			patchOp("Courses", "Patch material", "Updates a course material.", true, []any{path("id", "string", "Course UUID."), path("materialId", "string", "Material UUID.")}, body("UpdateMaterialRequest"), ok("CourseMaterial")),
 			deleteOp("Courses", "Delete material", "Deletes a course material.", true, []any{path("id", "string", "Course UUID."), path("materialId", "string", "Material UUID.")}, nil, ok("StatusResponse")),
@@ -347,28 +352,48 @@ func schemas() map[string]any {
 		"SubmitOrderResponse":   obj(req("order", ref("OrderResponse")), req("payment", ref("SubmitPaymentNextStep"))),
 		"SubmitPaymentNextStep": obj(req("transaction_id", uuidStr()), req("provider", str("Provider.")), req("status", str("Provider/payment status.")), req("amount", num("Amount.")), req("currency", str("Currency.")), prop("checkout_url", str("Checkout URL.")), prop("provider_ref", str("Provider transaction reference."))),
 
-		"CreateResponseRequest":  obj(prop("cover_letter", str("Cover letter.")), prop("proposed_amount", num("Proposed amount.")), prop("currency", str("Currency."))),
-		"UpdateResponseRequest":  obj(prop("cover_letter", str("Cover letter.")), prop("proposed_amount", num("Proposed amount.")), prop("currency", str("Currency."))),
-		"ResponseView":           obj(req("id", uuidStr()), req("order_id", uuidStr()), prop("executor_id", uuidStr()), prop("cover_letter", str("Cover letter.")), prop("proposed_amount", num("Proposed amount.")), req("currency", str("Currency.")), req("status", enumStr("draft", "payment_pending", "submitted", "accepted", "rejected", "cancelled")), req("is_paid", boolProp("Payment flag.")), prop("paid_at", dateTime()), req("created_at", dateTime()), req("updated_at", dateTime()), prop("order_title", str("Order title."))),
-		"ResponsesListResponse":  listSchema("ResponseView"),
-		"SubmitResponsePayload":  obj(req("response", ref("ResponseView")), req("payment", ref("SubmitPaymentNextStep"))),
-		"Selection":              obj(req("order_id", uuidStr()), req("order_status", str("Order status.")), prop("selected_response_id", uuidStr()), prop("selected_executor_id", uuidStr()), prop("selected_response_status", str("Response status."))),
-		"CreateReviewRequest":    obj(req("rating", intProp("Rating from 1 to 5.")), prop("comment", str("Review comment."))),
-		"Review":                 obj(req("id", uuidStr()), req("order_id", uuidStr()), req("client_id", uuidStr()), req("executor_id", uuidStr()), req("rating", intProp("Rating from 1 to 5.")), prop("comment", str("Review comment.")), req("created_at", dateTime()), req("updated_at", dateTime())),
-		"ReviewsListResponse":    listSchema("Review"),
-		"RatingInfo":             obj(req("executor_id", uuidStr()), req("reviews_count_total", intProp("Total reviews.")), req("reviews_count_recent", intProp("Recent reviews counted.")), req("avg_rating_recent", num("Average rating in recent window.")), req("avg_rating_total", num("Total average rating."))),
-		"Sanction":               obj(req("id", uuidStr()), req("executor_id", uuidStr()), req("status", enumStr("active", "resolved", "expired")), req("reason", str("Sanction reason.")), req("severity", intProp("Severity 1..5.")), req("started_at", dateTime()), prop("ends_at", dateTime()), prop("resolved_at", dateTime())),
-		"SanctionsResponse":      obj(req("items", arr(ref("Sanction")))),
-		"AdminSanctionsResponse": listSchema("Sanction"),
+		"CreateResponseRequest": obj(prop("cover_letter", str("Cover letter.")), prop("proposed_amount", num("Proposed amount.")), prop("currency", str("Currency."))),
+		"UpdateResponseRequest": obj(prop("cover_letter", str("Cover letter.")), prop("proposed_amount", num("Proposed amount.")), prop("currency", str("Currency."))),
+		"ResponseView":          obj(req("id", uuidStr()), req("order_id", uuidStr()), prop("executor_id", uuidStr()), prop("cover_letter", str("Cover letter.")), prop("proposed_amount", num("Proposed amount.")), req("currency", str("Currency.")), req("status", enumStr("draft", "payment_pending", "submitted", "accepted", "rejected", "cancelled")), req("is_paid", boolProp("Payment flag.")), prop("paid_at", dateTime()), req("created_at", dateTime()), req("updated_at", dateTime()), prop("order_title", str("Order title."))),
+		"ResponsesListResponse": listSchema("ResponseView"),
+		"SubmitResponsePayload": obj(req("response", ref("ResponseView")), req("payment", ref("SubmitPaymentNextStep"))),
+		"Selection":             obj(req("order_id", uuidStr()), req("order_status", str("Order status.")), prop("selected_response_id", uuidStr()), prop("selected_executor_id", uuidStr()), prop("selected_response_status", str("Response status."))),
+		"CreateReviewRequest":   obj(req("rating", intProp("Rating from 1 to 5.")), prop("comment", str("Review comment."))),
+		"Review":                obj(req("id", uuidStr()), req("order_id", uuidStr()), req("client_id", uuidStr()), req("executor_id", uuidStr()), req("rating", intProp("Rating from 1 to 5.")), prop("comment", str("Review comment.")), req("created_at", dateTime()), req("updated_at", dateTime())),
+		"ReviewsListResponse":   listSchema("Review"),
+		"CreateEntityReviewRequest": obj(
+			req("target_type", reviewTargetTypeSchema()),
+			req("target_id", uuidStr()),
+			req("rating", intProp("Rating from 1 to 5.")),
+			prop("comment", str("Review comment.")),
+			prop("metadata", freeObj("Optional review metadata.")),
+		),
+		"EntityReview": obj(
+			req("id", uuidStr()),
+			prop("author_id", uuidStr()),
+			req("target_type", reviewTargetTypeSchema()),
+			req("target_id", uuidStr()),
+			req("rating", intProp("Rating from 1 to 5.")),
+			prop("comment", str("Review comment.")),
+			req("metadata", freeObj("Review metadata.")),
+			req("created_at", dateTime()),
+			req("updated_at", dateTime()),
+		),
+		"EntityReviewsListResponse": listSchema("EntityReview"),
+		"EntityRatingSummary":       obj(req("target_type", reviewTargetTypeSchema()), req("target_id", uuidStr()), req("rating_avg", num("Average rating.")), req("rating_count", intProp("Total reviews.")), prop("updated_at", dateTime())),
+		"RatingInfo":                obj(req("executor_id", uuidStr()), req("reviews_count_total", intProp("Total reviews.")), req("reviews_count_recent", intProp("Recent reviews counted.")), req("avg_rating_recent", num("Average rating in recent window.")), req("avg_rating_total", num("Total average rating."))),
+		"Sanction":                  obj(req("id", uuidStr()), req("executor_id", uuidStr()), req("status", enumStr("active", "resolved", "expired")), req("reason", str("Sanction reason.")), req("severity", intProp("Severity 1..5.")), req("started_at", dateTime()), prop("ends_at", dateTime()), prop("resolved_at", dateTime())),
+		"SanctionsResponse":         obj(req("items", arr(ref("Sanction")))),
+		"AdminSanctionsResponse":    listSchema("Sanction"),
 
 		"CreateCourseRequest":           obj(req("title", str("Course title.")), prop("description", str("Course description."))),
 		"UpdateCourseRequest":           obj(prop("title", str("Course title.")), prop("description", str("Course description."))),
 		"Course":                        obj(req("id", uuidStr()), prop("coach_id", uuidStr()), prop("created_by", uuidStr()), req("title", str("Course title.")), prop("description", str("Course description.")), req("status", enumStr("draft", "published", "archived")), req("created_at", dateTime()), req("updated_at", dateTime())),
 		"CoursesListResponse":           listSchema("Course"),
 		"CourseDetailResponse":          obj(req("course", ref("Course")), req("materials", arr(ref("CourseMaterial")))),
-		"CreateMaterialRequest":         obj(req("title", str("Material title.")), req("type", enumStr("video", "pdf", "link", "text")), prop("url", str("URL for video/pdf/link.")), prop("content", str("Text content for text material.")), prop("position", intProp("Sort order."))),
-		"UpdateMaterialRequest":         obj(prop("title", str("Material title.")), prop("type", enumStr("video", "pdf", "link", "text")), prop("url", str("URL for video/pdf/link.")), prop("content", str("Text content for text material.")), prop("position", intProp("Sort order."))),
-		"CourseMaterial":                obj(req("id", uuidStr()), req("course_id", uuidStr()), req("title", str("Material title.")), req("type", enumStr("video", "pdf", "link", "text")), prop("url", str("Material URL.")), prop("content", str("Material content.")), req("position", intProp("Sort order.")), req("created_at", dateTime()), req("updated_at", dateTime())),
+		"CreateMaterialRequest":         obj(req("title", str("Material title.")), req("type", enumStr("video", "pdf", "link", "text")), prop("upload_id", uuidStr()), prop("url", str("URL for video/pdf/link.")), prop("content", str("Text content for text material.")), prop("position", intProp("Sort order."))),
+		"UpdateMaterialRequest":         obj(prop("title", str("Material title.")), prop("type", enumStr("video", "pdf", "link", "text")), prop("upload_id", uuidStr()), prop("url", str("URL for video/pdf/link.")), prop("content", str("Text content for text material.")), prop("position", intProp("Sort order."))),
+		"CourseMaterial":                obj(req("id", uuidStr()), req("course_id", uuidStr()), req("title", str("Material title.")), req("type", enumStr("video", "pdf", "link", "text")), prop("upload_id", uuidStr()), prop("url", str("Material URL.")), prop("content", str("Material content.")), req("position", intProp("Sort order.")), req("created_at", dateTime()), req("updated_at", dateTime())),
 		"CreateAssignmentRequest":       obj(req("course_id", uuidStr()), req("executor_id", uuidStr()), req("source", enumStr("manual_admin", "sanction_low_rating_first", "sanction_low_rating_repeat")), prop("reason", str("Assignment reason.")), prop("due_at", dateTime())),
 		"CourseAssignment":              obj(req("id", uuidStr()), req("course_id", uuidStr()), req("executor_id", uuidStr()), prop("sanction_id", uuidStr()), prop("assigned_by", uuidStr()), prop("reason", str("Reason.")), req("source", str("Source.")), req("status", enumStr("assigned", "in_progress", "completed", "overdue", "cancelled")), req("assigned_at", dateTime()), prop("due_at", dateTime()), prop("completed_at", dateTime()), req("created_at", dateTime()), req("updated_at", dateTime())),
 		"CourseAssignmentsListResponse": listSchema("CourseAssignment"),
@@ -610,6 +635,10 @@ func enumStr(values ...string) map[string]any {
 
 func targetTypeSchema() map[string]any {
 	return enumStr("profile_document", "order_attachment", "response_attachment", "review_attachment", "chat_attachment", "course_material")
+}
+
+func reviewTargetTypeSchema() map[string]any {
+	return enumStr("user", "client", "executor", "coach", "profile", "order", "response", "review", "course", "course_material")
 }
 
 func verificationStatusSchema() map[string]any {
