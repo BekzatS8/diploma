@@ -58,7 +58,7 @@ func New(deps Deps) *gin.Engine {
 	r := gin.New()
 
 	r.Use(middleware.RequestID())
-	r.Use(middleware.DebugErrorMiddleware())
+	r.Use(middleware.DebugErrorMiddleware(deps.Config.App.Env != "production"))
 	r.Use(middleware.RequestLogging(deps.Logger))
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     deps.Config.Server.AllowedOrigins,

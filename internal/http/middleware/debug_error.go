@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"buhpro/internal/common/response"
+
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 )
@@ -95,7 +97,12 @@ func (bw *bufferedResponseWriter) FlushOriginal() {
 	}
 }
 
-func DebugErrorMiddleware() gin.HandlerFunc {
+func DebugErrorMiddleware(includeDebugDetails ...bool) gin.HandlerFunc {
+	debugDetailsEnabled := true
+	if len(includeDebugDetails) > 0 {
+		debugDetailsEnabled = includeDebugDetails[0]
+	}
+
 	return func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/uploads/") {
 			c.Next()
@@ -121,7 +128,11 @@ func DebugErrorMiddleware() gin.HandlerFunc {
 					Str("stack_trace", stackTrace).
 					Msg("panic recovered")
 
-				writeDebugErrorJSON(originalWriter, c, status, errorTrace, stackTrace)
+				if debugDetailsEnabled {
+					writeDebugErrorJSON(originalWriter, c, status, errorTrace, stackTrace)
+				} else {
+					writeSanitizedErrorJSON(originalWriter, c, status)
+				}
 				c.Abort()
 				return
 			}
@@ -140,7 +151,11 @@ func DebugErrorMiddleware() gin.HandlerFunc {
 					Str("stack_trace", stackTrace).
 					Msg("http error intercepted")
 
-				writeDebugErrorJSON(originalWriter, c, status, errorTrace, stackTrace)
+				if debugDetailsEnabled {
+					writeDebugErrorJSON(originalWriter, c, status, errorTrace, stackTrace)
+				} else {
+					bufferedWriter.FlushOriginal()
+				}
 				return
 			}
 
@@ -149,6 +164,20 @@ func DebugErrorMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func writeSanitizedErrorJSON(w gin.ResponseWriter, c *gin.Context, status int) {
+	w.Header().Del("Content-Length")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set(requestIDHeader, requestIDFromGin(c))
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(response.ErrorResponse{
+		Error: response.ErrorBody{
+			Code:      "internal_error",
+			Message:   "Internal server error",
+			RequestID: requestIDFromGin(c),
+		},
+	})
 }
 
 func writeDebugErrorJSON(w gin.ResponseWriter, c *gin.Context, status int, errorTrace, stackTrace string) {

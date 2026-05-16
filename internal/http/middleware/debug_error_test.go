@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"buhpro/internal/common/response"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -85,6 +87,64 @@ func TestDebugErrorMiddlewareConvertsPanic(t *testing.T) {
 	}
 	if !strings.Contains(resp.Error.StackTrace, "panic") {
 		t.Fatal("expected panic stack trace")
+	}
+}
+
+func TestDebugErrorMiddlewarePassesOriginalErrorWhenDebugDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RequestID())
+	r.Use(DebugErrorMiddleware(false))
+	r.GET("/json", func(c *gin.Context) {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request")
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/json", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+
+	var resp response.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Error.Code != "bad_request" {
+		t.Fatalf("expected original error code, got %q", resp.Error.Code)
+	}
+	if strings.Contains(w.Body.String(), "stack_trace") || strings.Contains(w.Body.String(), "error_trace") {
+		t.Fatalf("expected no debug traces, got %s", w.Body.String())
+	}
+}
+
+func TestDebugErrorMiddlewareSanitizesPanicWhenDebugDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RequestID())
+	r.Use(DebugErrorMiddleware(false))
+	r.GET("/panic", func(c *gin.Context) {
+		panic("boom")
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", w.Code)
+	}
+
+	var resp response.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Error.Code != "internal_error" {
+		t.Fatalf("expected internal_error, got %q", resp.Error.Code)
+	}
+	if strings.Contains(w.Body.String(), "boom") || strings.Contains(w.Body.String(), "stack_trace") {
+		t.Fatalf("expected sanitized panic response, got %s", w.Body.String())
 	}
 }
 
