@@ -101,7 +101,7 @@ func paths() map[string]any {
 		),
 
 		"/api/v1/files":      post("Uploads", "Upload files", "Uploads one or more files to local storage. Send multipart/form-data with repeated file fields.", true, nil, multipartFilesBody(), created("UploadListResponse")),
-		"/api/v1/files/{id}": pathItem(getOp("Uploads", "Get uploaded file metadata", "Returns upload metadata and public local URL.", false, []any{path("id", "string", "Upload UUID.")}, nil, ok("UploadView")), deleteOp("Uploads", "Delete uploaded file", "Deletes an owned upload record and local file; admin can delete any upload.", true, []any{path("id", "string", "Upload UUID.")}, nil, ok("StatusResponse"))),
+		"/api/v1/files/{id}": pathItem(getOp("Uploads", "Get uploaded file metadata", "Returns upload metadata and local URL for the owner; admin can read any upload.", true, []any{path("id", "string", "Upload UUID.")}, nil, ok("UploadView")), deleteOp("Uploads", "Delete uploaded file", "Deletes an owned upload record and local file; admin can delete any upload.", true, []any{path("id", "string", "Upload UUID.")}, nil, ok("StatusResponse"))),
 		"/api/v1/my/files":   get("Uploads", "My uploaded files", "Lists uploads owned by the authenticated user.", true, nil, nil, ok("UploadListResponse")),
 
 		"/api/v1/my/wallet":                     get("Wallets", "My wallet", "Returns current user's internal balance and latest transactions.", true, nil, nil, ok("WalletResponse")),
