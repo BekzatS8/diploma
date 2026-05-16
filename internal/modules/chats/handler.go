@@ -61,7 +61,7 @@ func (h *Handler) ListMyMessages(c *gin.Context) {
 }
 
 type sendMessageRequest struct {
-	Text string `json:"text"`
+	Text string `json:"text" binding:"required"`
 }
 
 func (h *Handler) SendMyMessage(c *gin.Context) {

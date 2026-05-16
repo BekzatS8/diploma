@@ -27,7 +27,7 @@ type UpdateProfileRequest struct {
 }
 
 type SetAvatarRequest struct {
-	UploadID string `json:"upload_id" binding:"required"`
+	UploadID string `json:"upload_id" binding:"required,uuid"`
 }
 
 type ProfileDocument struct {
