@@ -248,9 +248,12 @@ func New(deps Deps) *gin.Engine {
 		myChats := v1.Group("/my/chats")
 		myChats.Use(middleware.RequireAuth(deps.JWTManager))
 		myChats.GET("", deps.ChatsHandler.ListMyChats)
+		myChats.POST("", deps.ChatsHandler.CreateDirectChat)
 		myChats.GET("/:id", deps.ChatsHandler.GetMyChatByID)
 		myChats.GET("/:id/messages", deps.ChatsHandler.ListMyMessages)
 		myChats.POST("/:id/messages", deps.ChatsHandler.SendMyMessage)
+		myChats.PATCH("/:id/messages/:messageId", deps.ChatsHandler.PatchMyMessage)
+		myChats.DELETE("/:id/messages/:messageId", deps.ChatsHandler.DeleteMyMessage)
 		myChats.POST("/:id/read", deps.ChatsHandler.MarkMyChatRead)
 
 		adminChats := v1.Group("/admin/chats")

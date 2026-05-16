@@ -225,11 +225,18 @@ func paths() map[string]any {
 		"/api/v1/admin/notifications":        get("Notifications", "Admin notifications list", "Admin notification list with user, type, status and channel filters.", true, []any{query("user_id", "string", false, "User UUID."), query("type", "string", false, "Notification type."), query("status", "string", false, "Notification status."), query("channel", "string", false, "Notification channel."), pageParam(), pageSizeParam()}, nil, listOK("NotificationsListResponse")),
 		"/api/v1/admin/notifications/{id}":   get("Notifications", "Admin notification details", "Admin reads any notification.", true, []any{path("id", "string", "Notification UUID.")}, nil, ok("Notification")),
 
-		"/api/v1/my/chats":      get("Chats", "My chats", "Authenticated chat participant list.", true, []any{pageParam(), pageSizeParam()}, nil, listOK("ChatsListResponse")),
+		"/api/v1/my/chats": pathItem(
+			getOp("Chats", "My chats", "Authenticated chat participant list.", true, []any{pageParam(), pageSizeParam()}, nil, listOK("ChatsListResponse")),
+			postOp("Chats", "Create direct chat", "Creates or returns a one-to-one dialog with another active user.", true, nil, body("CreateDirectChatRequest"), created("ChatDetail")),
+		),
 		"/api/v1/my/chats/{id}": get("Chats", "My chat details", "Authenticated participant reads chat details.", true, []any{path("id", "string", "Chat UUID.")}, nil, ok("ChatDetail")),
 		"/api/v1/my/chats/{id}/messages": pathItem(
 			getOp("Chats", "My chat messages", "Participant reads chat messages oldest-first.", true, []any{path("id", "string", "Chat UUID."), pageParam(), pageSizeParam()}, nil, listOK("MessagesListResponse")),
-			postOp("Chats", "Send chat message", "Client/executor participant sends a text message and notifies the other participant.", true, []any{path("id", "string", "Chat UUID.")}, body("SendMessageRequest"), created("Message")),
+			postOp("Chats", "Send chat message", "Client/executor participant sends a text message with optional uploaded file ids and notifies the other participant.", true, []any{path("id", "string", "Chat UUID.")}, body("SendMessageRequest"), created("Message")),
+		),
+		"/api/v1/my/chats/{id}/messages/{messageId}": pathItem(
+			patchOp("Chats", "Edit chat message", "Message author updates text while keeping existing attachments.", true, []any{path("id", "string", "Chat UUID."), path("messageId", "string", "Message UUID.")}, body("UpdateMessageRequest"), ok("Message")),
+			deleteOp("Chats", "Delete chat message", "Message author soft-deletes a message.", true, []any{path("id", "string", "Chat UUID."), path("messageId", "string", "Message UUID.")}, nil, ok("StatusResponse")),
 		),
 		"/api/v1/my/chats/{id}/read":        post("Chats", "Mark chat read", "Updates participant-level last_read_at.", true, []any{path("id", "string", "Chat UUID.")}, nil, ok("StatusResponse")),
 		"/api/v1/admin/chats":               get("Chats", "Admin chats list", "Admin paginated chat list.", true, []any{pageParam(), pageSizeParam()}, nil, listOK("ChatsListResponse")),
@@ -413,13 +420,21 @@ func schemas() map[string]any {
 		"Notification":              obj(req("id", uuidStr()), req("user_id", uuidStr()), req("type", str("Notification type.")), req("channel", enumStr("in_app", "email", "sms")), req("status", enumStr("pending", "sent", "failed", "read")), req("payload", freeObj("Machine-readable payload.")), req("created_at", dateTime()), prop("sent_at", dateTime()), prop("read_at", dateTime()), prop("error_message", str("Delivery error."))),
 		"NotificationsListResponse": listSchema("Notification"),
 		"MarkAllReadResponse":       obj(req("updated", intProp("Number of rows updated."))),
-		"ChatParticipant":           obj(req("user_id", uuidStr()), req("joined_at", dateTime()), prop("last_read_at", dateTime()), req("is_muted", boolProp("Muted flag."))),
-		"ChatSummary":               obj(req("id", uuidStr()), req("order_id", uuidStr()), req("created_at", dateTime()), prop("last_message_at", dateTime()), prop("last_message", str("Last message preview.")), req("participants", arr(ref("ChatParticipant")))),
-		"ChatDetail":                obj(req("id", uuidStr()), req("order_id", uuidStr()), req("created_at", dateTime()), req("participants", arr(ref("ChatParticipant")))),
+		"ChatParticipant":           obj(req("user_id", uuidStr()), req("joined_at", dateTime()), prop("last_read_at", dateTime())),
+		"ChatSummary":               obj(req("chat_id", uuidStr()), req("chat_type", enumStr("order", "direct")), prop("order_id", uuidStr()), prop("user_a_id", uuidStr()), prop("user_b_id", uuidStr()), req("participants", arr(ref("ChatParticipant"))), prop("last_message_preview", str("Last message preview.")), prop("last_message_at", dateTime()), req("unread_count", intProp("Unread message count.")), req("has_unread", boolProp("Has unread messages."))),
+		"ChatDetail":                obj(req("chat_id", uuidStr()), req("chat_type", enumStr("order", "direct")), prop("order_id", uuidStr()), prop("order_status", str("Order status for order chats.")), prop("client_id", uuidStr()), prop("selected_executor_id", uuidStr()), prop("user_a_id", uuidStr()), prop("user_b_id", uuidStr()), req("participants", arr(ref("ChatParticipant"))), prop("last_message_at", dateTime())),
 		"ChatsListResponse":         listSchema("ChatSummary"),
-		"Message":                   obj(req("id", uuidStr()), req("chat_id", uuidStr()), prop("sender_user_id", uuidStr()), req("sender_type", enumStr("user", "system")), req("body", str("Message body.")), req("created_at", dateTime()), prop("edited_at", dateTime()), prop("deleted_at", dateTime())),
+		"MessageAttachment":         obj(req("id", uuidStr()), req("upload_id", uuidStr()), req("file_path", str("Local storage path.")), prop("url", str("Public local URL.")), req("original_name", str("Original file name.")), req("mime_type", str("MIME type.")), req("size_bytes", intProp("File size in bytes.")), req("created_at", dateTime())),
+		"Message":                   obj(req("id", uuidStr()), req("chat_id", uuidStr()), prop("sender_user_id", uuidStr()), req("sender_type", enumStr("user", "system")), req("text", str("Message text.")), req("attachments", arr(ref("MessageAttachment"))), req("created_at", dateTime()), prop("edited_at", dateTime()), prop("deleted_at", dateTime())),
 		"MessagesListResponse":      listSchema("Message"),
-		"SendMessageRequest":        obj(req("text", str("Message text."))),
+		"CreateDirectChatRequest": obj(
+			req("participant_id", uuidStr()),
+		),
+		"SendMessageRequest": obj(
+			prop("text", str("Message text. Required when attachment_ids is empty.")),
+			prop("attachment_ids", arr(uuidStr())),
+		),
+		"UpdateMessageRequest": obj(req("text", str("Updated message text."))),
 	}
 }
 

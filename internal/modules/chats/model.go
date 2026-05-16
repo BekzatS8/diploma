@@ -10,7 +10,10 @@ type ChatParticipant struct {
 
 type ChatSummary struct {
 	ChatID             string            `json:"chat_id"`
-	OrderID            string            `json:"order_id"`
+	ChatType           string            `json:"chat_type"`
+	OrderID            *string           `json:"order_id,omitempty"`
+	UserAID            *string           `json:"user_a_id,omitempty"`
+	UserBID            *string           `json:"user_b_id,omitempty"`
 	Participants       []ChatParticipant `json:"participants"`
 	LastMessagePreview *string           `json:"last_message_preview,omitempty"`
 	LastMessageAt      *time.Time        `json:"last_message_at,omitempty"`
@@ -20,21 +23,38 @@ type ChatSummary struct {
 
 type ChatDetail struct {
 	ChatID             string            `json:"chat_id"`
-	OrderID            string            `json:"order_id"`
-	OrderStatus        string            `json:"order_status"`
-	ClientID           string            `json:"client_id"`
+	ChatType           string            `json:"chat_type"`
+	OrderID            *string           `json:"order_id,omitempty"`
+	OrderStatus        *string           `json:"order_status,omitempty"`
+	ClientID           *string           `json:"client_id,omitempty"`
 	SelectedExecutorID *string           `json:"selected_executor_id,omitempty"`
+	UserAID            *string           `json:"user_a_id,omitempty"`
+	UserBID            *string           `json:"user_b_id,omitempty"`
 	Participants       []ChatParticipant `json:"participants"`
 	LastMessageAt      *time.Time        `json:"last_message_at,omitempty"`
 }
 
-type Message struct {
+type MessageAttachment struct {
 	ID           string    `json:"id"`
-	ChatID       string    `json:"chat_id"`
-	SenderUserID *string   `json:"sender_user_id,omitempty"`
-	SenderType   string    `json:"sender_type"`
-	Text         string    `json:"text"`
+	UploadID     string    `json:"upload_id"`
+	FilePath     string    `json:"file_path"`
+	URL          string    `json:"url,omitempty"`
+	OriginalName string    `json:"original_name"`
+	MimeType     string    `json:"mime_type"`
+	SizeBytes    int64     `json:"size_bytes"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type Message struct {
+	ID           string              `json:"id"`
+	ChatID       string              `json:"chat_id"`
+	SenderUserID *string             `json:"sender_user_id,omitempty"`
+	SenderType   string              `json:"sender_type"`
+	Text         string              `json:"text"`
+	Attachments  []MessageAttachment `json:"attachments"`
+	CreatedAt    time.Time           `json:"created_at"`
+	EditedAt     *time.Time          `json:"edited_at,omitempty"`
+	DeletedAt    *time.Time          `json:"deleted_at,omitempty"`
 }
 
 type ListChatsQuery struct {

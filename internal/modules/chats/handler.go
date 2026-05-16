@@ -61,7 +61,35 @@ func (h *Handler) ListMyMessages(c *gin.Context) {
 }
 
 type sendMessageRequest struct {
-	Text string `json:"text"`
+	Text          string   `json:"text"`
+	AttachmentIDs []string `json:"attachment_ids"`
+}
+
+type createDirectChatRequest struct {
+	ParticipantID string `json:"participant_id" binding:"required"`
+}
+
+type updateMessageRequest struct {
+	Text string `json:"text" binding:"required"`
+}
+
+func (h *Handler) CreateDirectChat(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	var req createDirectChatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
+		return
+	}
+	item, err := h.service.CreateDirectChat(c.Request.Context(), user.UserID, user.PrimaryRole(), req.ParticipantID)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusCreated, item)
 }
 
 func (h *Handler) SendMyMessage(c *gin.Context) {
@@ -75,12 +103,44 @@ func (h *Handler) SendMyMessage(c *gin.Context) {
 		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
 		return
 	}
-	item, err := h.service.SendMessageMy(c.Request.Context(), c.Param("id"), user.UserID, user.PrimaryRole(), req.Text)
+	item, err := h.service.SendMessageMy(c.Request.Context(), c.Param("id"), user.UserID, user.PrimaryRole(), req.Text, req.AttachmentIDs)
 	if err != nil {
 		h.handleErr(c, err)
 		return
 	}
 	response.JSON(c, http.StatusCreated, item)
+}
+
+func (h *Handler) PatchMyMessage(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	var req updateMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
+		return
+	}
+	item, err := h.service.UpdateMessageMy(c.Request.Context(), c.Param("id"), c.Param("messageId"), user.UserID, user.PrimaryRole(), req.Text)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, item)
+}
+
+func (h *Handler) DeleteMyMessage(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	if err := h.service.DeleteMessageMy(c.Request.Context(), c.Param("id"), c.Param("messageId"), user.UserID, user.PrimaryRole()); err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, gin.H{"status": "deleted"})
 }
 
 func (h *Handler) MarkMyChatRead(c *gin.Context) {

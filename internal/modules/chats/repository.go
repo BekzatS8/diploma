@@ -3,7 +3,9 @@ package chats
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,7 +19,7 @@ func (r *Repository) EnsureChatForSelectionTx(ctx context.Context, tx pgx.Tx, or
 	err := tx.QueryRow(ctx, `
 		INSERT INTO chats(order_id)
 		VALUES($1)
-		ON CONFLICT (order_id) DO NOTHING
+		ON CONFLICT (order_id) WHERE order_id IS NOT NULL DO NOTHING
 		RETURNING id
 	`, orderID).Scan(&chatID)
 	if err != nil {
@@ -39,6 +41,52 @@ func (r *Repository) EnsureChatForSelectionTx(ctx context.Context, tx pgx.Tx, or
 	return chatID, nil
 }
 
+func (r *Repository) EnsureDirectChat(ctx context.Context, userID, peerID string) (ChatDetail, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ChatDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND is_active=TRUE)`, peerID).Scan(&exists); err != nil {
+		return ChatDetail{}, err
+	}
+	if !exists {
+		return ChatDetail{}, pgx.ErrNoRows
+	}
+
+	a, b := orderedPair(userID, peerID)
+	var chatID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO chats(chat_type, user_a_id, user_b_id)
+		VALUES('direct', $1, $2)
+		ON CONFLICT (LEAST(user_a_id, user_b_id), GREATEST(user_a_id, user_b_id))
+		WHERE chat_type='direct' AND user_a_id IS NOT NULL AND user_b_id IS NOT NULL
+		DO NOTHING
+		RETURNING id
+	`, a, b).Scan(&chatID)
+	if err != nil {
+		if err != pgx.ErrNoRows {
+			return ChatDetail{}, err
+		}
+		if err := tx.QueryRow(ctx, `SELECT id FROM chats WHERE chat_type='direct' AND LEAST(user_a_id,user_b_id)=LEAST($1::uuid,$2::uuid) AND GREATEST(user_a_id,user_b_id)=GREATEST($1::uuid,$2::uuid)`, userID, peerID).Scan(&chatID); err != nil {
+			return ChatDetail{}, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO chat_participants(chat_id, user_id)
+		VALUES($1,$2),($1,$3)
+		ON CONFLICT (chat_id, user_id) DO NOTHING
+	`, chatID, userID, peerID); err != nil {
+		return ChatDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ChatDetail{}, err
+	}
+	return r.getChatDetail(ctx, chatID)
+}
+
 func (r *Repository) ListMyChats(ctx context.Context, q ListChatsQuery) ([]ChatSummary, int64, error) {
 	var total int64
 	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM chat_participants WHERE user_id=$1`, q.UserID).Scan(&total); err != nil {
@@ -47,7 +95,10 @@ func (r *Repository) ListMyChats(ctx context.Context, q ListChatsQuery) ([]ChatS
 	rows, err := r.db.Query(ctx, `
 		SELECT
 			c.id,
-			c.order_id,
+			c.chat_type,
+			c.order_id::text,
+			c.user_a_id::text,
+			c.user_b_id::text,
 			lm.body,
 			lm.created_at,
 			COALESCE((
@@ -82,7 +133,7 @@ func (r *Repository) ListMyChats(ctx context.Context, q ListChatsQuery) ([]ChatS
 	for rows.Next() {
 		var it ChatSummary
 		var participantsRaw []byte
-		if err := rows.Scan(&it.ChatID, &it.OrderID, &it.LastMessagePreview, &it.LastMessageAt, &it.UnreadCount, &participantsRaw); err != nil {
+		if err := rows.Scan(&it.ChatID, &it.ChatType, &it.OrderID, &it.UserAID, &it.UserBID, &it.LastMessagePreview, &it.LastMessageAt, &it.UnreadCount, &participantsRaw); err != nil {
 			return nil, 0, err
 		}
 		if err := json.Unmarshal(participantsRaw, &it.Participants); err != nil {
@@ -109,7 +160,8 @@ func (r *Repository) GetChatByIDAdmin(ctx context.Context, chatID string) (ChatD
 
 func (r *Repository) getChatDetail(ctx context.Context, chatID string) (ChatDetail, error) {
 	row := r.db.QueryRow(ctx, `
-		SELECT c.id, c.order_id, o.status, o.client_id, o.selected_executor_id,
+		SELECT c.id, c.chat_type, c.order_id::text, o.status, o.client_id::text, o.selected_executor_id::text,
+			c.user_a_id::text, c.user_b_id::text,
 			(
 				SELECT COALESCE(MAX(m.created_at), NULL) FROM messages m WHERE m.chat_id=c.id AND m.deleted_at IS NULL
 			),
@@ -119,12 +171,12 @@ func (r *Repository) getChatDetail(ctx context.Context, chatID string) (ChatDeta
 				WHERE p.chat_id = c.id
 			)
 		FROM chats c
-		JOIN orders o ON o.id = c.order_id
-		WHERE c.id=$1 AND o.deleted_at IS NULL
+		LEFT JOIN orders o ON o.id = c.order_id
+		WHERE c.id=$1 AND (o.id IS NULL OR o.deleted_at IS NULL)
 	`, chatID)
 	var item ChatDetail
 	var participantsRaw []byte
-	if err := row.Scan(&item.ChatID, &item.OrderID, &item.OrderStatus, &item.ClientID, &item.SelectedExecutorID, &item.LastMessageAt, &participantsRaw); err != nil {
+	if err := row.Scan(&item.ChatID, &item.ChatType, &item.OrderID, &item.OrderStatus, &item.ClientID, &item.SelectedExecutorID, &item.UserAID, &item.UserBID, &item.LastMessageAt, &participantsRaw); err != nil {
 		return ChatDetail{}, err
 	}
 	if err := json.Unmarshal(participantsRaw, &item.Participants); err != nil {
@@ -145,7 +197,7 @@ func (r *Repository) ListMessages(ctx context.Context, chatID string, q ListMess
 		return nil, 0, err
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT id, chat_id, sender_user_id, sender_type, body, created_at
+		SELECT id, chat_id, sender_user_id, sender_type, body, created_at, edited_at, deleted_at
 		FROM messages
 		WHERE chat_id=$1 AND deleted_at IS NULL
 		ORDER BY created_at ASC, id ASC
@@ -158,30 +210,36 @@ func (r *Repository) ListMessages(ctx context.Context, chatID string, q ListMess
 	items := make([]Message, 0)
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.ID, &m.ChatID, &m.SenderUserID, &m.SenderType, &m.Text, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ChatID, &m.SenderUserID, &m.SenderType, &m.Text, &m.CreatedAt, &m.EditedAt, &m.DeletedAt); err != nil {
 			return nil, 0, err
 		}
 		items = append(items, m)
 	}
-	return items, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if err := r.loadAttachments(ctx, items); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
 }
 
 type CreateMessageResult struct {
 	Message     Message
-	OrderID     string
+	OrderID     *string
 	ReceiverID  string
 	ReceiverSet bool
 }
 
-func (r *Repository) CreateMessage(ctx context.Context, chatID, senderUserID, text string) (CreateMessageResult, error) {
+func (r *Repository) CreateMessage(ctx context.Context, chatID, senderUserID, text string, uploadIDs []string) (CreateMessageResult, error) {
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return CreateMessageResult{}, err
 	}
 	defer tx.Rollback(ctx)
 
-	var orderID string
-	if err := tx.QueryRow(ctx, `SELECT order_id FROM chats WHERE id=$1 FOR UPDATE`, chatID).Scan(&orderID); err != nil {
+	var orderID *string
+	if err := tx.QueryRow(ctx, `SELECT order_id::text FROM chats WHERE id=$1 FOR UPDATE`, chatID).Scan(&orderID); err != nil {
 		return CreateMessageResult{}, err
 	}
 
@@ -197,8 +255,11 @@ func (r *Repository) CreateMessage(ctx context.Context, chatID, senderUserID, te
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO messages(chat_id, sender_user_id, sender_type, body)
 		VALUES($1,$2,'user',$3)
-		RETURNING id, chat_id, sender_user_id, sender_type, body, created_at
-	`, chatID, senderUserID, text).Scan(&msg.ID, &msg.ChatID, &msg.SenderUserID, &msg.SenderType, &msg.Text, &msg.CreatedAt); err != nil {
+		RETURNING id, chat_id, sender_user_id, sender_type, body, created_at, edited_at, deleted_at
+	`, chatID, senderUserID, text).Scan(&msg.ID, &msg.ChatID, &msg.SenderUserID, &msg.SenderType, &msg.Text, &msg.CreatedAt, &msg.EditedAt, &msg.DeletedAt); err != nil {
+		return CreateMessageResult{}, err
+	}
+	if err := r.attachUploadsTx(ctx, tx, msg.ID, chatID, senderUserID, uploadIDs); err != nil {
 		return CreateMessageResult{}, err
 	}
 
@@ -220,7 +281,44 @@ func (r *Repository) CreateMessage(ctx context.Context, chatID, senderUserID, te
 	if err := tx.Commit(ctx); err != nil {
 		return CreateMessageResult{}, err
 	}
+	items := []Message{msg}
+	_ = r.loadAttachments(ctx, items)
+	msg = items[0]
 	return CreateMessageResult{Message: msg, OrderID: orderID, ReceiverID: receiverID, ReceiverSet: receiverSet}, nil
+}
+
+func (r *Repository) UpdateMessage(ctx context.Context, chatID, messageID, userID, text string) (Message, error) {
+	row := r.db.QueryRow(ctx, `
+		UPDATE messages
+		SET body=$4, edited_at=NOW()
+		WHERE id=$1 AND chat_id=$2 AND sender_user_id=$3 AND deleted_at IS NULL
+		RETURNING id, chat_id, sender_user_id, sender_type, body, created_at, edited_at, deleted_at
+	`, messageID, chatID, userID, text)
+	var msg Message
+	if err := row.Scan(&msg.ID, &msg.ChatID, &msg.SenderUserID, &msg.SenderType, &msg.Text, &msg.CreatedAt, &msg.EditedAt, &msg.DeletedAt); err != nil {
+		return Message{}, err
+	}
+	items := []Message{msg}
+	if err := r.loadAttachments(ctx, items); err != nil {
+		return Message{}, err
+	}
+	msg = items[0]
+	return msg, nil
+}
+
+func (r *Repository) DeleteMessage(ctx context.Context, chatID, messageID, userID string) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE messages
+		SET deleted_at=NOW()
+		WHERE id=$1 AND chat_id=$2 AND sender_user_id=$3 AND deleted_at IS NULL
+	`, messageID, chatID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 func (r *Repository) MarkRead(ctx context.Context, chatID, userID string) error {
@@ -242,7 +340,10 @@ func (r *Repository) ListAdminChats(ctx context.Context, page, pageSize int) ([]
 	rows, err := r.db.Query(ctx, `
 		SELECT
 			c.id,
-			c.order_id,
+			c.chat_type,
+			c.order_id::text,
+			c.user_a_id::text,
+			c.user_b_id::text,
 			lm.body,
 			lm.created_at,
 			0::bigint,
@@ -266,7 +367,7 @@ func (r *Repository) ListAdminChats(ctx context.Context, page, pageSize int) ([]
 	for rows.Next() {
 		var it ChatSummary
 		var participantsRaw []byte
-		if err := rows.Scan(&it.ChatID, &it.OrderID, &it.LastMessagePreview, &it.LastMessageAt, &it.UnreadCount, &participantsRaw); err != nil {
+		if err := rows.Scan(&it.ChatID, &it.ChatType, &it.OrderID, &it.UserAID, &it.UserBID, &it.LastMessagePreview, &it.LastMessageAt, &it.UnreadCount, &participantsRaw); err != nil {
 			return nil, 0, err
 		}
 		if err := json.Unmarshal(participantsRaw, &it.Participants); err != nil {
@@ -275,6 +376,76 @@ func (r *Repository) ListAdminChats(ctx context.Context, page, pageSize int) ([]
 		items = append(items, it)
 	}
 	return items, total, rows.Err()
+}
+
+func (r *Repository) attachUploadsTx(ctx context.Context, tx pgx.Tx, messageID, chatID, userID string, uploadIDs []string) error {
+	seen := map[string]struct{}{}
+	sortOrder := 0
+	for _, uploadID := range uploadIDs {
+		uploadID = strings.TrimSpace(uploadID)
+		if uploadID == "" {
+			continue
+		}
+		if _, exists := seen[uploadID]; exists {
+			continue
+		}
+		seen[uploadID] = struct{}{}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM uploads WHERE id=$1 AND author_id=$2)`, uploadID, userID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return pgx.ErrNoRows
+		}
+		metadata, _ := json.Marshal(map[string]any{"chat_id": chatID})
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO attachments(id, upload_id, target_type, target_id, sort_order, metadata)
+			VALUES($1, $2, 'chat_attachment', $3, $4, $5::jsonb)
+			ON CONFLICT (upload_id, target_type, target_id) DO NOTHING
+		`, uuid.NewString(), uploadID, messageID, sortOrder, string(metadata)); err != nil {
+			return err
+		}
+		sortOrder++
+	}
+	return nil
+}
+
+func (r *Repository) loadAttachments(ctx context.Context, messages []Message) error {
+	for i := range messages {
+		rows, err := r.db.Query(ctx, `
+			SELECT a.id::text, a.upload_id::text, u.file_path, u.original_name, u.mime_type, u.size_bytes, a.created_at
+			FROM attachments a
+			JOIN uploads u ON u.id=a.upload_id
+			WHERE a.target_type='chat_attachment' AND a.target_id=$1::uuid
+			ORDER BY a.sort_order ASC, a.created_at ASC
+		`, messages[i].ID)
+		if err != nil {
+			return err
+		}
+		attachments := make([]MessageAttachment, 0)
+		for rows.Next() {
+			var item MessageAttachment
+			if err := rows.Scan(&item.ID, &item.UploadID, &item.FilePath, &item.OriginalName, &item.MimeType, &item.SizeBytes, &item.CreatedAt); err != nil {
+				rows.Close()
+				return err
+			}
+			attachments = append(attachments, item)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		messages[i].Attachments = attachments
+	}
+	return nil
+}
+
+func orderedPair(a, b string) (string, string) {
+	if strings.Compare(a, b) <= 0 {
+		return a, b
+	}
+	return b, a
 }
 
 func (r *Repository) ListMessagesAdmin(ctx context.Context, chatID string, q ListMessagesQuery) ([]Message, int64, error) {

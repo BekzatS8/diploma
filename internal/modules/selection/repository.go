@@ -103,11 +103,14 @@ func (r *Repository) SelectResponse(ctx context.Context, orderID, responseID, ac
 
 	var chatID string
 	chatErr := tx.QueryRow(ctx, `
-		INSERT INTO chats(order_id)
-		VALUES($1)
-		ON CONFLICT (order_id) DO NOTHING
+		INSERT INTO chats(order_id, chat_type, user_a_id, user_b_id)
+		VALUES($1, 'order', $2, $3)
+		ON CONFLICT (order_id) WHERE order_id IS NOT NULL DO UPDATE
+		SET user_a_id=COALESCE(chats.user_a_id, EXCLUDED.user_a_id),
+			user_b_id=COALESCE(chats.user_b_id, EXCLUDED.user_b_id),
+			updated_at=NOW()
 		RETURNING id
-	`, orderID).Scan(&chatID)
+	`, orderID, clientID, executorID).Scan(&chatID)
 	if chatErr != nil {
 		if chatErr != pgx.ErrNoRows {
 			return "", false, chatErr
