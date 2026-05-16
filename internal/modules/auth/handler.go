@@ -168,7 +168,7 @@ func (h *Handler) handleAuthError(c *gin.Context, err error) {
 		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Unauthorized")
 	default:
 		if err != nil && err.Error() != "" {
-			if err.Error() == "password must be at least 8 characters" || err.Error() == "password must include upper, lower, and numeric characters" {
+			if err.Error() == "password must be at least 8 characters" {
 				response.JSONError(c, http.StatusBadRequest, "invalid_password", err.Error())
 				return
 			}

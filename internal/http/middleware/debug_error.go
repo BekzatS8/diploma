@@ -137,7 +137,7 @@ func DebugErrorMiddleware(includeDebugDetails ...bool) gin.HandlerFunc {
 				return
 			}
 
-			if bufferedWriter.Status() >= http.StatusBadRequest {
+			if bufferedWriter.Status() >= http.StatusInternalServerError {
 				stackTrace := string(debug.Stack())
 				errorTrace := strings.TrimSpace(bufferedWriter.body.String())
 				status := bufferedWriter.Status()

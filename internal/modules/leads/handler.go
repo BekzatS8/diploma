@@ -321,7 +321,7 @@ func (h *Handler) handleErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrInvalidInput):
 		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid lead data")
 	default:
-		if err != nil && (err.Error() == "password must be at least 8 characters" || err.Error() == "password must include upper, lower, and numeric characters") {
+		if err != nil && err.Error() == "password must be at least 8 characters" {
 			response.JSONError(c, http.StatusBadRequest, "invalid_password", err.Error())
 			return
 		}
