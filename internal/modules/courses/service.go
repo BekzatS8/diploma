@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	notifications "buhpro/internal/modules/notifications"
+	uploads "buhpro/internal/modules/uploads"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -21,10 +22,11 @@ var (
 type Service struct {
 	repo     *Repository
 	notifier *notifications.Service
+	uploads  *uploads.Service
 }
 
-func NewService(repo *Repository, notifier *notifications.Service) *Service {
-	return &Service{repo: repo, notifier: notifier}
+func NewService(repo *Repository, notifier *notifications.Service, uploads *uploads.Service) *Service {
+	return &Service{repo: repo, notifier: notifier, uploads: uploads}
 }
 
 func (s *Service) CreateCourse(ctx context.Context, userID, role string, req CreateCourseRequest) (Course, error) {
@@ -134,6 +136,9 @@ func (s *Service) AddMaterial(ctx context.Context, courseID, userID, role string
 	if err != nil {
 		return CourseMaterial{}, ErrInvalidInput
 	}
+	if err := s.ensureUploadAllowed(ctx, uploadID, userID, role); err != nil {
+		return CourseMaterial{}, err
+	}
 	mt, err := validateMaterial(req.Type, uploadID, req.URL, req.Content)
 	if err != nil {
 		return CourseMaterial{}, err
@@ -161,6 +166,9 @@ func (s *Service) UpdateMaterial(ctx context.Context, courseID, materialID, user
 	if err != nil {
 		return CourseMaterial{}, ErrInvalidInput
 	}
+	if err := s.ensureUploadAllowed(ctx, uploadID, userID, role); err != nil {
+		return CourseMaterial{}, err
+	}
 	if req.Type != nil {
 		mt, err := validateMaterial(*req.Type, uploadID, req.URL, req.Content)
 		if err != nil {
@@ -176,6 +184,26 @@ func (s *Service) UpdateMaterial(ctx context.Context, courseID, materialID, user
 		return CourseMaterial{}, err
 	}
 	return item, nil
+}
+
+func (s *Service) ensureUploadAllowed(ctx context.Context, uploadID *string, userID, role string) error {
+	if uploadID == nil || role == "admin" {
+		return nil
+	}
+	if s.uploads == nil {
+		return ErrForbidden
+	}
+	item, err := s.uploads.GetByID(ctx, *uploadID)
+	if err != nil {
+		if errors.Is(err, uploads.ErrNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if item.AuthorID != userID {
+		return ErrForbidden
+	}
+	return nil
 }
 
 func (s *Service) DeleteMaterial(ctx context.Context, courseID, materialID, userID, role string) error {

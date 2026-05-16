@@ -109,7 +109,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	reviewsRepo := reviewsmodule.NewRepository(dbPool)
 	reviewsService := reviewsmodule.NewService(reviewsRepo, dbPool, ratingService, notificationsService)
 	coursesRepo := coursesmodule.NewRepository(dbPool)
-	coursesService := coursesmodule.NewService(coursesRepo, notificationsService)
+	coursesService := coursesmodule.NewService(coursesRepo, notificationsService, uploadsService)
 	chatsRepo := chatsmodule.NewRepository(dbPool)
 	chatsService := chatsmodule.NewService(chatsRepo, notificationsService)
 	attachmentsRepo := attachmentsmodule.NewRepository(dbPool)
