@@ -58,7 +58,7 @@ func New(deps Deps) *gin.Engine {
 	r := gin.New()
 
 	r.Use(middleware.RequestID())
-	r.Use(middleware.DebugErrorMiddleware())
+	r.Use(middleware.DebugErrorMiddleware(deps.Config.App.Env != "production"))
 	r.Use(middleware.RequestLogging(deps.Logger))
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     deps.Config.Server.AllowedOrigins,
@@ -101,8 +101,8 @@ func New(deps Deps) *gin.Engine {
 		profileGroup.DELETE("/avatar", deps.ProfileHandler.ClearAvatar)
 
 		filesGroup := v1.Group("/files")
-		filesGroup.GET("/:id", deps.UploadsHandler.GetByID)
 		filesGroup.Use(middleware.RequireAuth(deps.JWTManager))
+		filesGroup.GET("/:id", deps.UploadsHandler.GetByID)
 		filesGroup.POST("", deps.UploadsHandler.Upload)
 		filesGroup.DELETE("/:id", deps.UploadsHandler.Delete)
 

@@ -104,6 +104,17 @@ func (s *Service) GetByID(ctx context.Context, id string) (Upload, error) {
 	return s.repo.GetByID(ctx, id)
 }
 
+func (s *Service) GetByIDForUser(ctx context.Context, id, userID, role string) (Upload, error) {
+	item, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return Upload{}, err
+	}
+	if role != "admin" && item.AuthorID != userID {
+		return Upload{}, ErrForbidden
+	}
+	return item, nil
+}
+
 func (s *Service) ListByAuthor(ctx context.Context, userID, role string) ([]Upload, error) {
 	if role == "" {
 		return nil, ErrForbidden

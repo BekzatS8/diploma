@@ -3,14 +3,14 @@ package attachments
 import "time"
 
 type AttachRequest struct {
-	UploadIDs  []string `json:"upload_ids" binding:"required"`
+	UploadIDs  []string `json:"upload_ids" binding:"required,dive,uuid"`
 	TargetType string   `json:"target_type" binding:"required"`
-	TargetID   string   `json:"target_id" binding:"required"`
+	TargetID   string   `json:"target_id" binding:"required,uuid"`
 	Metadata   Metadata `json:"metadata"`
 }
 
 type ReorderRequest struct {
-	IDs []string `json:"ids" binding:"required"`
+	IDs []string `json:"ids" binding:"required,dive,uuid"`
 }
 
 type AttachmentView struct {
