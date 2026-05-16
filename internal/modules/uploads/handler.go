@@ -53,12 +53,17 @@ func (h *Handler) Upload(c *gin.Context) {
 }
 
 func (h *Handler) GetByID(c *gin.Context) {
-	item, err := h.service.GetByID(c.Request.Context(), c.Param("id"))
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	item, err := h.service.GetByIDForUser(c.Request.Context(), c.Param("id"), user.UserID, user.PrimaryRole())
 	if err != nil {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, h.service.ToView(item, false))
+	response.JSON(c, http.StatusOK, h.service.ToView(item, true))
 }
 
 func (h *Handler) ListMy(c *gin.Context) {
