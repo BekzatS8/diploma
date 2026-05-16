@@ -90,7 +90,6 @@ func (h *Handler) CreateDirectChat(c *gin.Context) {
 		return
 	}
 	response.JSON(c, http.StatusCreated, item)
-	Text string `json:"text" binding:"required"`
 }
 
 func (h *Handler) SendMyMessage(c *gin.Context) {
