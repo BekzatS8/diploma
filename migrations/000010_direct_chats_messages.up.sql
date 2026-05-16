@@ -16,8 +16,8 @@ SET chat_type='order',
     user_b_id=p.executor_id
 FROM (
     SELECT cp.chat_id,
-           MAX(CASE WHEN u.role='client' THEN cp.user_id END) AS client_id,
-           MAX(CASE WHEN u.role='executor' THEN cp.user_id END) AS executor_id
+           (ARRAY_AGG(cp.user_id) FILTER (WHERE u.role='client'))[1] AS client_id,
+           (ARRAY_AGG(cp.user_id) FILTER (WHERE u.role='executor'))[1] AS executor_id
     FROM chat_participants cp
     JOIN users u ON u.id=cp.user_id
     GROUP BY cp.chat_id
