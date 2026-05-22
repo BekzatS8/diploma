@@ -184,7 +184,7 @@ func (r *Repository) transitionOrder(ctx context.Context, orderID, actorID, from
 			return "", ErrInvalidState
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE orders SET status=$2, updated_at=NOW(), completed_at=CASE WHEN $2='completed' THEN NOW() ELSE completed_at END WHERE id=$1`, orderID, toStatus); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE orders SET status=$2::order_status, updated_at=NOW(), completed_at=CASE WHEN $2::order_status='completed'::order_status THEN NOW() ELSE completed_at END WHERE id=$1`, orderID, toStatus); err != nil {
 		return "", err
 	}
 	if toStatus == "completed" && selectedExecutorID != nil && executorPaidAt == nil && paymentStatus == "paid" {

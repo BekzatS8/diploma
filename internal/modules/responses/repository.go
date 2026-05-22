@@ -299,7 +299,7 @@ func (r *Repository) SubmitWithPayment(ctx context.Context, orderID, responseID,
 	pRow := tx.QueryRow(ctx, `
 		INSERT INTO payment_transactions (user_id, object_type, object_id, response_id, provider, provider_transaction_id, amount, currency, status, metadata)
 		VALUES ($1,'response_submission',$2,$2,$3,$4,$5,$6,'pending',$7::jsonb)
-		RETURNING id, response_id, provider, provider_transaction_id, amount, currency, status, initiated_at
+		RETURNING id::text, response_id::text, provider, provider_transaction_id, amount, currency, status, initiated_at
 	`, executorID, responseID, provider, providerRef, amount, currency, fmt.Sprintf(`{"checkout_url":%q}`, checkoutURL))
 	var pay PaymentTransaction
 	if err := pRow.Scan(&pay.ID, &pay.ResponseID, &pay.Provider, &pay.ProviderTransactionID, &pay.Amount, &pay.Currency, &pay.Status, &pay.InitiatedAt); err != nil {

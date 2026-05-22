@@ -41,7 +41,7 @@ type ResponseSubmittedEvent struct {
 }
 
 func (r *Repository) GetTransaction(ctx context.Context, tx pgx.Tx, id string) (Transaction, error) {
-	row := tx.QueryRow(ctx, `SELECT id, status, object_type, order_id, response_id, user_id, paid_at FROM payment_transactions WHERE id=$1 FOR UPDATE`, id)
+	row := tx.QueryRow(ctx, `SELECT id::text, status, object_type, order_id::text, response_id::text, user_id::text, paid_at FROM payment_transactions WHERE id=$1 FOR UPDATE`, id)
 	var t Transaction
 	err := row.Scan(&t.ID, &t.Status, &t.ObjectType, &t.OrderID, &t.ResponseID, &t.UserID, &t.PaidAt)
 	return t, err

@@ -256,7 +256,7 @@ func (r *Repository) SoftDelete(ctx context.Context, id, clientID string) error 
 
 func (r *Repository) LatestPaymentByOrderID(ctx context.Context, orderID string) (*PaymentTransaction, error) {
 	row := r.db.QueryRow(ctx, `
-		SELECT id, order_id, provider, provider_transaction_id, amount, currency, status, initiated_at
+		SELECT id::text, order_id::text, provider, provider_transaction_id, amount, currency, status, initiated_at
 		FROM payment_transactions
 		WHERE order_id = $1
 		ORDER BY initiated_at DESC
@@ -361,7 +361,7 @@ func (r *Repository) SubmitWithWallet(ctx context.Context, orderID, clientID str
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO wallet_transactions(user_id, amount, direction, currency, reason, order_id, created_by, metadata)
-		VALUES($1, $2, 'debit', $3, 'order_submit', $4, $1, jsonb_build_object('posting_fee',$5,'promotion_fee',$6,'escrow_amount',$7))
+		VALUES($1, $2, 'debit', $3, 'order_submit', $4, $1, jsonb_build_object('posting_fee',$5::numeric,'promotion_fee',$6::numeric,'escrow_amount',$7::numeric))
 	`, clientID, totalCharge, currency, orderID, postingFee, promotionFee, escrowAmount); err != nil {
 		return Order{}, PaymentTransaction{}, err
 	}
@@ -372,7 +372,7 @@ func (r *Repository) SubmitWithWallet(ctx context.Context, orderID, clientID str
 			amount, currency, status, paid_at, metadata
 		)
 		VALUES ($1, 'order_posting', $2, $2, 'internal_wallet', $3, $4, $5, 'succeeded', NOW(), $6::jsonb)
-		RETURNING id, order_id, provider, provider_transaction_id, amount, currency, status, initiated_at
+		RETURNING id::text, order_id::text, provider, provider_transaction_id, amount, currency, status, initiated_at
 	`, clientID, orderID, "wallet-"+orderID, totalCharge, currency,
 		fmt.Sprintf(`{"posting_fee":%v,"promotion_fee":%v,"escrow_amount":%v}`, postingFee, promotionFee, escrowAmount),
 	)

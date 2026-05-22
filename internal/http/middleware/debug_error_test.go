@@ -55,19 +55,24 @@ func TestDebugErrorMiddlewareConvertsHTTPError(t *testing.T) {
 	}
 }
 
-func TestDebugErrorMiddlewareConvertsJSONError(t *testing.T) {
+func TestDebugErrorMiddlewarePassesJSONError(t *testing.T) {
 	r := testRouter()
 	r.GET("/json", func(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "bad_request"}})
 	})
 
-	resp := performRequest(r, http.MethodGet, "/json")
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/json", nil)
+	r.ServeHTTP(w, req)
 
-	if resp.Status != http.StatusBadRequest {
-		t.Fatalf("expected status 400, got %d", resp.Status)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
 	}
-	if !strings.Contains(resp.Error.ErrorTrace, `"bad_request"`) {
-		t.Fatalf("expected original JSON in error_trace, got %q", resp.Error.ErrorTrace)
+	if !strings.Contains(w.Body.String(), `"bad_request"`) {
+		t.Fatalf("expected original JSON body, got %q", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "stack_trace") || strings.Contains(w.Body.String(), "error_trace") {
+		t.Fatalf("expected no debug traces for 4xx response, got %s", w.Body.String())
 	}
 }
 

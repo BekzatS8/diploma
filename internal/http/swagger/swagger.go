@@ -2,6 +2,8 @@ package swagger
 
 import (
 	"net/http"
+	"strings"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 )
@@ -71,7 +73,6 @@ func Spec() map[string]any {
 			tag("Courses", "Coach/admin course management and executor assignments."),
 			tag("Notifications", "In-app notification read models."),
 			tag("Chats", "REST chat access for participants and admins."),
-			tag("Admin Debug", "Admin read/debug endpoints."),
 		},
 		"paths":      paths(),
 		"components": components(),
@@ -93,11 +94,11 @@ func paths() map[string]any {
 
 		"/api/v1/profile": pathItem(
 			getOp("Profile", "Get current profile", "Returns the profile table matching the current user's role.", true, nil, nil, ok("ProfileResponse")),
-			patchOp("Profile", "Update current profile", "Partially updates the current role profile.", true, nil, body("UpdateProfileRequest"), ok("StatusResponse")),
+			patchOp("Profile", "Update current profile", "Partially updates the current role profile and returns the updated profile payload.", true, nil, body("UpdateProfileRequest"), ok("ProfileResponse")),
 		),
 		"/api/v1/profile/avatar": pathItem(
-			patchOp("Profile", "Set profile avatar", "Links one uploaded file as the current role profile avatar.", true, nil, body("SetAvatarRequest"), ok("StatusResponse")),
-			deleteOp("Profile", "Clear profile avatar", "Removes the avatar link from the current role profile without deleting the uploaded file.", true, nil, nil, ok("StatusResponse")),
+			patchOp("Profile", "Set profile avatar", "Links one uploaded file as the current role profile avatar and returns the updated profile payload.", true, nil, body("SetAvatarRequest"), ok("ProfileResponse")),
+			deleteOp("Profile", "Clear profile avatar", "Removes the avatar link from the current role profile without deleting the uploaded file and returns the updated profile payload.", true, nil, nil, ok("ProfileResponse")),
 		),
 
 		"/api/v1/files":      post("Uploads", "Upload files", "Uploads one or more files to local storage. Send multipart/form-data with repeated file fields.", true, nil, multipartFilesBody(), created("UploadListResponse")),
@@ -257,31 +258,23 @@ func components() map[string]any {
 func schemas() map[string]any {
 	return map[string]any{
 		"ErrorResponse": obj(
-			req("success", boolProp("Always false for intercepted debug errors.")),
 			req("error", ref("ErrorBody")),
-			req("request_id", str("Request identifier from X-Request-ID.")),
-			req("timestamp", dateTime()),
-			req("path", str("Request path.")),
-			req("method", str("HTTP method.")),
-			req("status", intProp("HTTP status code.")),
 		),
 		"ErrorBody": obj(
-			req("code", str("Machine-readable code, for example HTTP_500.")),
-			req("message", str("HTTP status text.")),
-			req("error_trace", str("Original intercepted response body or panic value.")),
-			req("stack_trace", str("runtime/debug.Stack output.")),
+			req("code", str("Machine-readable error code.")),
+			req("message", str("Human-readable error message.")),
+			prop("request_id", str("Request identifier from X-Request-ID.")),
 		),
 		"StatusResponse":       obj(prop("status", str("Operation status."))),
 		"HealthResponse":       obj(prop("status", str("Service status."))),
 		"PingResponse":         obj(prop("message", str("pong"))),
-		"RegisterRequest":      obj(req("email", str("User email.")), req("password", str("Password, minimum 8 chars.")), req("role", enumStr("client", "coach")), req("profile_name", str("Initial profile display/company name.")), prop("phone", str("Phone for client profile.")), prop("website", str("Website.")), prop("client_type", enumStr("too", "ip", "representative")), prop("tax_number", str("BIN/IIN.")), prop("contact_name", str("Contact person.")), prop("contact_position", str("Contact position.")), prop("address", str("Legal/contact address.")), prop("about", str("Profile description."))),
+		"RegisterRequest":      obj(req("email", str("User email.")), req("password", str("Password, minimum 8 chars.")), req("role", enumStr("client", "coach")), prop("profile_name", str("Initial profile display/company name.")), prop("phone", str("Phone for client profile.")), prop("website", str("Website.")), prop("client_type", enumStr("too", "ip", "representative")), prop("tax_number", str("BIN/IIN.")), prop("contact_name", str("Contact person.")), prop("contact_position", str("Contact position.")), prop("address", str("Legal/contact address.")), prop("about", str("Profile description."))),
 		"LoginRequest":         obj(req("email", str("User email.")), req("password", str("User password."))),
 		"RefreshRequest":       obj(req("refresh_token", str("Refresh JWT."))),
 		"LogoutRequest":        obj(req("refresh_token", str("Refresh JWT to revoke."))),
 		"TokenPair":            obj(req("access_token", str("Access JWT.")), req("refresh_token", str("Refresh JWT."))),
-		"AuthResponse":         obj(req("user", ref("User")), req("tokens", ref("TokenPair")), prop("profile", freeObj("Current role profile."))),
-		"MeResponse":           obj(req("user", ref("User")), prop("profile", freeObj("Current role profile."))),
-		"User":                 obj(req("id", uuidStr()), req("email", str("Email.")), req("role", enumStr("client", "executor", "coach", "admin")), req("is_active", boolProp("Active flag.")), prop("verification_status", verificationStatusSchema()), req("created_at", dateTime())),
+		"AuthResponse":         obj(req("user_id", uuidStr()), req("email", str("User email.")), req("role", enumStr("client", "executor", "coach", "admin")), req("verification_status", verificationStatusSchema()), req("access_token", str("Access JWT.")), req("refresh_token", str("Refresh JWT."))),
+		"MeResponse":           obj(req("id", uuidStr()), req("email", str("User email.")), req("role", enumStr("client", "executor", "coach", "admin")), req("verification_status", verificationStatusSchema()), req("profile", freeObj("Current role profile."))),
 		"ProfileResponse":      freeObj("Role-specific profile payload."),
 		"UpdateProfileRequest": freeObj("Role-specific profile fields: company_name, phone, about, display_name, bio, years_experience, expertise."),
 		"SetAvatarRequest":     obj(req("upload_id", uuidStr())),
@@ -426,7 +419,7 @@ func schemas() map[string]any {
 		"ChatsListResponse":         listSchema("ChatSummary"),
 		"MessageAttachment":         obj(req("id", uuidStr()), req("upload_id", uuidStr()), req("file_path", str("Local storage path.")), prop("url", str("Public local URL.")), req("original_name", str("Original file name.")), req("mime_type", str("MIME type.")), req("size_bytes", intProp("File size in bytes.")), req("created_at", dateTime())),
 		"Message":                   obj(req("id", uuidStr()), req("chat_id", uuidStr()), prop("sender_user_id", uuidStr()), req("sender_type", enumStr("user", "system")), req("text", str("Message text.")), req("attachments", arr(ref("MessageAttachment"))), req("created_at", dateTime()), prop("edited_at", dateTime()), prop("deleted_at", dateTime())),
-		"MessagesListResponse":      listSchema("Message"),
+		"MessagesListResponse":      obj(req("items", arr(ref("Message"))), req("page", intProp("Page number.")), req("page_size", intProp("Page size.")), req("total", intProp("Total matching items.")), req("order", enumStr("asc"))),
 		"CreateDirectChatRequest": obj(
 			req("participant_id", uuidStr()),
 		),
@@ -481,6 +474,7 @@ func method(name, tagName, summary, description string, secured bool, params []a
 		"tags":        []any{tagName},
 		"summary":     summary,
 		"description": description,
+		"operationId": operationID(name, tagName, summary),
 		"responses":   withDefaultErrors(responses),
 	}
 	if secured {
@@ -601,13 +595,63 @@ func pageSizeParam() map[string]any {
 }
 
 func param(name, in, schemaType string, required bool, description string) map[string]any {
+	schema := map[string]any{"type": schemaType}
+	if schemaType == "string" && strings.Contains(strings.ToUpper(description), "UUID") {
+		schema["format"] = "uuid"
+	}
+
 	return map[string]any{
 		"name":        name,
 		"in":          in,
 		"required":    required,
 		"description": description,
-		"schema":      map[string]any{"type": schemaType},
+		"schema":      schema,
 	}
+}
+
+func operationID(methodName, tagName, summary string) string {
+	words := identifierWords(methodName + " " + tagName + " " + summary)
+	if len(words) == 0 {
+		return methodName
+	}
+
+	var b strings.Builder
+	b.WriteString(words[0])
+	for _, word := range words[1:] {
+		b.WriteString(titleWord(word))
+	}
+	return b.String()
+}
+
+func identifierWords(value string) []string {
+	words := make([]string, 0)
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		words = append(words, b.String())
+		b.Reset()
+	}
+
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(unicode.ToLower(r))
+			continue
+		}
+		flush()
+	}
+	flush()
+	return words
+}
+
+func titleWord(word string) string {
+	runes := []rune(word)
+	if len(runes) == 0 {
+		return ""
+	}
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
 }
 
 func obj(props ...map[string]any) map[string]any {
