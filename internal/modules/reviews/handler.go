@@ -16,14 +16,14 @@ type Handler struct{ service *Service }
 func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 
 type createReq struct {
-	Rating  int     `json:"rating"`
+	Rating  int     `json:"rating" binding:"required,min=1,max=5"`
 	Comment *string `json:"comment"`
 }
 
 type createEntityReq struct {
 	TargetType string         `json:"target_type" binding:"required"`
-	TargetID   string         `json:"target_id" binding:"required"`
-	Rating     int            `json:"rating" binding:"required"`
+	TargetID   string         `json:"target_id" binding:"required,uuid"`
+	Rating     int            `json:"rating" binding:"required,min=1,max=5"`
 	Comment    *string        `json:"comment"`
 	Metadata   map[string]any `json:"metadata"`
 }
@@ -119,8 +119,10 @@ func (h *Handler) handleErr(c *gin.Context, err error) {
 		response.JSONError(c, http.StatusNotFound, "not_found", "Not found")
 	case errors.Is(err, ErrAlreadyExists):
 		response.JSONError(c, http.StatusConflict, "already_exists", "Review already exists")
-	case errors.Is(err, ErrInvalidInput):
+	case errors.Is(err, ErrInvalidState):
 		response.JSONError(c, http.StatusConflict, "invalid_state", "Review preconditions are not met")
+	case errors.Is(err, ErrInvalidInput):
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid review data")
 	default:
 		response.JSONError(c, http.StatusInternalServerError, "internal_error", "Internal server error")
 	}

@@ -119,3 +119,22 @@ func (r *Repository) IsOwnerOrAdmin(ctx context.Context, orderID, userID, role s
 	}
 	return strings.EqualFold(clientID, userID), nil
 }
+
+func (r *Repository) CanCreateCourseReview(ctx context.Context, userID, role, courseID string) (bool, error) {
+	if role != "executor" {
+		return false, nil
+	}
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM course_assignments ca
+			JOIN courses c ON c.id = ca.course_id
+			WHERE ca.course_id=$1::uuid
+			  AND ca.executor_id=$2::uuid
+			  AND ca.status='completed'
+			  AND c.deleted_at IS NULL
+		)
+	`, courseID, userID).Scan(&exists)
+	return exists, err
+}

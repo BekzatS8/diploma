@@ -481,6 +481,7 @@ function Run-FullApiTestsForBaseUrl {
         -File (New-TestFile -FieldName "file" -FileName "avatar.png" -ContentType "image/png" -Bytes (Get-TestPngBytes))
     if ($null -ne $avatarUploadId) {
         Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/files/$avatarUploadId" -Token $client.AccessToken -Expected @(200) -Name "files/{id} GET avatar" | Out-Null
+        Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/files/not-a-uuid" -Token $client.AccessToken -Expected @(400) -Name "files/{id} GET invalid uuid" | Out-Null
         Invoke-Api -BaseUrl $baseUrl -Method "PATCH" -Path "/api/v1/profile/avatar" -Token $client.AccessToken -Body @{ upload_id = $avatarUploadId } -Expected @(200) -Name "profile/avatar PATCH" | Out-Null
         Invoke-Api -BaseUrl $baseUrl -Method "DELETE" -Path "/api/v1/profile/avatar" -Token $client.AccessToken -Expected @(200) -Name "profile/avatar DELETE" | Out-Null
     }
@@ -490,9 +491,11 @@ function Run-FullApiTestsForBaseUrl {
     Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/admin/wallets/$($client.UserId)/credit" -Token $admin.AccessToken -Body @{ amount = 1000000; reason = "full_api_test_credit" } -Expected @(200) -Name "admin/wallets/{userId}/credit" | Out-Null
 
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/my/files" -Token $client.AccessToken -Expected @(200) -Name "my/files GET" | Out-Null
-    Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/attachments?target_type=order_attachment&target_id=00000000-0000-0000-0000-000000000000" -Expected @(200) -Name "attachments GET empty target" | Out-Null
+    Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/attachments?target_type=order_attachment&target_id=00000000-0000-0000-0000-000000000000" -Expected @(401) -Name "attachments GET requires auth" | Out-Null
+    Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/attachments?target_type=order_attachment&target_id=00000000-0000-0000-0000-000000000000" -Token $client.AccessToken -Expected @(404) -Name "attachments GET missing target" | Out-Null
 
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/reviews?target_type=user&target_id=$($executor.UserId)" -Expected @(200) -Name "reviews GET list by target" | Out-Null
+    Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/reviews" -Token $client.AccessToken -Body @{ target_type = "user"; target_id = $executor.UserId; rating = 5; comment = "Forbidden generic user review." } -Expected @(403) -Name "reviews POST generic user forbidden" | Out-Null
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/ratings?target_type=user&target_id=$($executor.UserId)" -Expected @(200) -Name "ratings GET summary" | Out-Null
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/executors/$($executor.UserId)/reviews" -Expected @(200) -Name "executors/{id}/reviews GET" | Out-Null
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/executors/$($executor.UserId)/rating" -Expected @(200) -Name "executors/{id}/rating GET" | Out-Null
@@ -553,6 +556,7 @@ function Run-FullApiTestsForBaseUrl {
             Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/my/course-assignments" -Token $executor.AccessToken -Expected @(200) -Name "my/course-assignments GET" | Out-Null
             Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/my/course-assignments/$assignId" -Token $executor.AccessToken -Expected @(200) -Name "my/course-assignments/{id} GET" | Out-Null
             Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/my/course-assignments/$assignId/mark-completed" -Token $executor.AccessToken -Expected @(200) -Name "my/course-assignments/{id}/mark-completed POST" | Out-Null
+            Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/reviews" -Token $executor.AccessToken -Body @{ target_type = "course"; target_id = $courseId; rating = 5; comment = "Full API test course review." } -Expected @(201) -Name "reviews POST course after completed assignment" | Out-Null
         }
         Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/coach/courses/$courseId/archive" -Token $coach.AccessToken -Expected @(200) -Name "coach/courses/{id}/archive POST" | Out-Null
     }
@@ -573,6 +577,7 @@ function Run-FullApiTestsForBaseUrl {
         return
     }
     $orderId = $mainDraft.Json.id
+    $orderAttachmentId = ""
 
     $attachmentUploadId = Upload-TestFile `
         -BaseUrl $baseUrl `
@@ -586,12 +591,14 @@ function Run-FullApiTestsForBaseUrl {
             target_id   = $orderId
             metadata    = @{ source = "full_api_test" }
         } -Expected @(201) -Name "attachments POST order"
-        Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/attachments?target_type=order_attachment&target_id=$orderId" -Expected @(200) -Name "attachments GET order" | Out-Null
+        Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/attachments?target_type=order_attachment&target_id=$orderId" -Expected @(401) -Name "attachments GET order requires auth" | Out-Null
+        Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/attachments?target_type=order_attachment&target_id=$orderId" -Token $executor.AccessToken -Expected @(403) -Name "attachments GET order executor before selection forbidden" | Out-Null
+        Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/attachments?target_type=order_attachment&target_id=$orderId" -Token $client.AccessToken -Expected @(200) -Name "attachments GET order client owner" | Out-Null
         if ($attach.Ok) {
             $attachmentId = Get-FirstItemId $attach.Json
             if (Require-Value $attachmentId "created attachment id") {
+                $orderAttachmentId = $attachmentId
                 Invoke-Api -BaseUrl $baseUrl -Method "PATCH" -Path "/api/v1/attachments/reorder" -Token $client.AccessToken -Body @{ ids = @($attachmentId) } -Expected @(200) -Name "attachments PATCH reorder" | Out-Null
-                Invoke-Api -BaseUrl $baseUrl -Method "DELETE" -Path "/api/v1/attachments/$attachmentId" -Token $client.AccessToken -Expected @(200) -Name "attachments DELETE" | Out-Null
             }
         }
     }
@@ -648,6 +655,27 @@ function Run-FullApiTestsForBaseUrl {
         return
     }
     $responseId = $createResponse.Json.id
+    $responseAttachmentId = ""
+
+    $responseAttachmentUploadId = Upload-TestFile `
+        -BaseUrl $baseUrl `
+        -Token $executor.AccessToken `
+        -Name "files POST response attachment" `
+        -File (New-TestFile -FieldName "file" -FileName "response-note.txt" -ContentType "text/plain" -Bytes ([System.Text.Encoding]::UTF8.GetBytes("Full API response attachment $stamp")))
+    if ($null -ne $responseAttachmentUploadId) {
+        $responseAttach = Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/attachments" -Token $executor.AccessToken -Body @{
+            upload_ids  = @($responseAttachmentUploadId)
+            target_type = "response_attachment"
+            target_id   = $responseId
+            metadata    = @{ source = "full_api_test" }
+        } -Expected @(201) -Name "attachments POST response executor owner"
+        Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/attachments?target_type=response_attachment&target_id=$responseId" -Token $executor.AccessToken -Expected @(200) -Name "attachments GET response executor owner" | Out-Null
+        Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/attachments?target_type=response_attachment&target_id=$responseId" -Token $client.AccessToken -Expected @(403) -Name "attachments GET response client before paid submitted forbidden" | Out-Null
+        if ($responseAttach.Ok) {
+            $responseAttachmentId = Get-FirstItemId $responseAttach.Json
+            Require-Value $responseAttachmentId "created response attachment id" | Out-Null
+        }
+    }
 
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/orders/$orderId/responses/my" -Token $executor.AccessToken -Expected @(200) -Name "orders/{id}/responses/my GET" | Out-Null
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/orders/$orderId/responses/my/$responseId" -Token $executor.AccessToken -Expected @(200) -Name "orders/{id}/responses/my/{rid} GET" | Out-Null
@@ -663,8 +691,15 @@ function Run-FullApiTestsForBaseUrl {
 
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/client/orders/$orderId/responses" -Token $client.AccessToken -Expected @(200) -Name "client/orders/{id}/responses GET" | Out-Null
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/client/orders/$orderId/responses/$responseId" -Token $client.AccessToken -Expected @(200) -Name "client/orders/{id}/responses/{rid} GET" | Out-Null
+    if (-not [string]::IsNullOrWhiteSpace($responseAttachmentId)) {
+        Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/attachments?target_type=response_attachment&target_id=$responseId" -Token $client.AccessToken -Expected @(200) -Name "attachments GET response client after paid submitted" | Out-Null
+    }
     Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/client/orders/$orderId/select-response/$responseId" -Token $client.AccessToken -Expected @(200) -Name "client/orders/{id}/select-response/{rid} POST" | Out-Null
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/client/orders/$orderId/selection" -Token $client.AccessToken -Expected @(200) -Name "client/orders/{id}/selection GET" | Out-Null
+    if (-not [string]::IsNullOrWhiteSpace($orderAttachmentId)) {
+        Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/attachments?target_type=order_attachment&target_id=$orderId" -Token $executor.AccessToken -Expected @(200) -Name "attachments GET order selected executor" | Out-Null
+        Invoke-Api -BaseUrl $baseUrl -Method "DELETE" -Path "/api/v1/attachments/$orderAttachmentId" -Token $client.AccessToken -Expected @(200) -Name "attachments DELETE order client owner" | Out-Null
+    }
 
     $myChats = Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/my/chats" -Token $client.AccessToken -Expected @(200) -Name "my/chats GET list"
     $orderChat = Get-FirstItemWhere -ListResult $myChats.Json -Property "order_id" -Value $orderId

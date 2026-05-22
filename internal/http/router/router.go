@@ -68,10 +68,16 @@ func New(deps Deps) *gin.Engine {
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
+	r.Use(middleware.ValidateUUIDPathParams("id", "userId", "executorId", "responseId", "transactionId", "materialId", "messageId"))
 
 	if deps.Config.Metrics.Enabled && deps.Metrics != nil {
 		r.Use(deps.Metrics.Middleware())
-		r.GET(deps.Config.Metrics.Path, metrics.Handler())
+		metricsHandlers := []gin.HandlerFunc{}
+		if !deps.Config.Metrics.Public {
+			metricsHandlers = append(metricsHandlers, middleware.RequireInternalRequest())
+		}
+		metricsHandlers = append(metricsHandlers, metrics.Handler())
+		r.GET(deps.Config.Metrics.Path, metricsHandlers...)
 	}
 
 	r.GET("/healthz", deps.SystemHandlers.Healthz)
@@ -120,8 +126,8 @@ func New(deps Deps) *gin.Engine {
 		adminWalletsGroup.POST("/:userId/credit", deps.WalletsHandler.AdminCredit)
 
 		attachmentsGroup := v1.Group("/attachments")
-		attachmentsGroup.GET("", deps.AttachmentsHandler.List)
 		attachmentsGroup.Use(middleware.RequireAuth(deps.JWTManager))
+		attachmentsGroup.GET("", deps.AttachmentsHandler.List)
 		attachmentsGroup.POST("", deps.AttachmentsHandler.Attach)
 		attachmentsGroup.PATCH("/reorder", deps.AttachmentsHandler.Reorder)
 		attachmentsGroup.DELETE("/:id", deps.AttachmentsHandler.Delete)

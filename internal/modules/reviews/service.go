@@ -18,6 +18,7 @@ var (
 	ErrForbidden     = errors.New("forbidden")
 	ErrNotFound      = errors.New("not found")
 	ErrInvalidInput  = errors.New("invalid input")
+	ErrInvalidState  = errors.New("invalid state")
 	ErrAlreadyExists = errors.New("already exists")
 )
 
@@ -55,7 +56,7 @@ func (s *Service) Create(ctx context.Context, orderID, userID, role string, rati
 		return Review{}, err
 	}
 	if !can {
-		return Review{}, ErrInvalidInput
+		return Review{}, ErrInvalidState
 	}
 
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
@@ -185,6 +186,16 @@ func (s *Service) CreateEntity(ctx context.Context, userID, role, targetType, ta
 	if comment != nil {
 		v := strings.TrimSpace(*comment)
 		comment = &v
+	}
+	if targetType != "course" {
+		return EntityReview{}, ErrForbidden
+	}
+	canReviewCourse, err := s.repo.CanCreateCourseReview(ctx, userID, role, targetID)
+	if err != nil {
+		return EntityReview{}, err
+	}
+	if !canReviewCourse {
+		return EntityReview{}, ErrForbidden
 	}
 
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})

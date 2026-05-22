@@ -35,7 +35,12 @@ func (h *Handler) Attach(c *gin.Context) {
 }
 
 func (h *Handler) List(c *gin.Context) {
-	items, err := h.service.ListByTarget(c.Request.Context(), TargetType(c.Query("target_type")), c.Query("target_id"))
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	items, err := h.service.ListByTarget(c.Request.Context(), TargetType(c.Query("target_type")), c.Query("target_id"), user.UserID, user.PrimaryRole())
 	if err != nil {
 		h.handleErr(c, err)
 		return

@@ -83,7 +83,7 @@ func paths() map[string]any {
 	return map[string]any{
 		"/healthz":     get("System", "Health check", "Returns liveness status without requiring database access.", false, nil, nil, ok("HealthResponse")),
 		"/readyz":      get("System", "Readiness check", "Checks database connectivity and reports whether the API is ready to serve traffic.", false, nil, nil, ok("HealthResponse")),
-		"/metrics":     get("System", "Prometheus metrics", "Prometheus scrape endpoint when METRICS_ENABLED=true.", false, nil, nil, textOK()),
+		"/metrics":     get("System", "Prometheus metrics", "Prometheus scrape endpoint when METRICS_ENABLED=true. By default it is available only from internal/private client IPs; set METRICS_PUBLIC=true only for demo exposure.", false, nil, nil, textOK()),
 		"/api/v1/ping": get("System", "API ping", "Versioned API ping endpoint.", false, nil, nil, ok("PingResponse")),
 
 		"/api/v1/auth/register": post("Auth", "Register user", "Creates a client or coach user and its role profile in one transaction. Executors must use the executor lead endpoint with documents.", false, nil, body("RegisterRequest"), created("AuthResponse")),
@@ -110,7 +110,7 @@ func paths() map[string]any {
 		"/api/v1/admin/wallets/{userId}/credit": post("Wallets", "Admin credit wallet", "Admin adds internal demo currency to a user wallet.", true, []any{path("userId", "string", "User UUID.")}, body("CreditWalletRequest"), ok("WalletCreditResponse")),
 
 		"/api/v1/attachments": pathItem(
-			getOp("Attachments", "List attachments", "Lists files attached to a target entity by target_type and target_id.", false, []any{query("target_type", "string", true, "Attachment target type."), query("target_id", "string", true, "Target UUID.")}, nil, ok("AttachmentListResponse")),
+			getOp("Attachments", "List attachments", "Lists files attached to a target entity by target_type and target_id according to target visibility rules.", true, []any{query("target_type", "string", true, "Attachment target type."), query("target_id", "string", true, "Target UUID.")}, nil, ok("AttachmentListResponse")),
 			postOp("Attachments", "Attach files", "Links existing uploaded files to one target entity. Owner must own uploads; admin can link any upload.", true, nil, body("AttachRequest"), created("AttachmentListResponse")),
 		),
 		"/api/v1/attachments/reorder": patchOp("Attachments", "Reorder attachments", "Rewrites sort_order by the provided attachment id order.", true, nil, body("ReorderAttachmentsRequest"), ok("StatusResponse")),
@@ -181,7 +181,7 @@ func paths() map[string]any {
 		),
 		"/api/v1/reviews": pathItem(
 			getOp("Reviews", "List target reviews", "Lists generic reviews attached to any supported target_type and target_id.", false, []any{query("target_type", "string", true, "Review target type."), query("target_id", "string", true, "Target UUID."), pageParam(), pageSizeParam()}, nil, listOK("EntityReviewsListResponse")),
-			postOp("Reviews", "Create target review", "Creates a generic one-to-many review for a target entity. Useful for orders, users, courses and future entities.", true, nil, body("CreateEntityReviewRequest"), created("EntityReview")),
+			postOp("Reviews", "Create target review", "Creates a generic course review after the current executor has completed an assignment for that course.", true, nil, body("CreateEntityReviewRequest"), created("EntityReview")),
 		),
 		"/api/v1/ratings":                        get("Reviews", "Target rating summary", "Returns aggregate rating for any supported target_type and target_id.", false, []any{query("target_type", "string", true, "Review target type."), query("target_id", "string", true, "Target UUID.")}, nil, ok("EntityRatingSummary")),
 		"/api/v1/executors/{executorId}/reviews": get("Reviews", "Executor reviews", "Public paginated reviews for an executor, newest first.", false, []any{path("executorId", "string", "Executor user UUID."), pageParam(), pageSizeParam()}, nil, listOK("ReviewsListResponse")),

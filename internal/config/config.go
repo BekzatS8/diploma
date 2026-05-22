@@ -89,6 +89,7 @@ type BootstrapConfig struct {
 type MetricsConfig struct {
 	Enabled bool
 	Path    string
+	Public  bool
 }
 
 type DevConfig struct {
@@ -156,6 +157,7 @@ func Load() (Config, error) {
 		Metrics: MetricsConfig{
 			Enabled: getEnvAsBool("METRICS_ENABLED", true),
 			Path:    getEnv("METRICS_PATH", "/metrics"),
+			Public:  getEnvAsBool("METRICS_PUBLIC", false),
 		},
 		Dev: DevConfig{
 			EnablePaymentEndpoints: getEnvAsBool("ENABLE_DEV_PAYMENT_ENDPOINTS", false),
