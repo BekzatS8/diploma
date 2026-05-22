@@ -49,17 +49,30 @@ func (s *Service) GetCurrentProfile(ctx context.Context, userID, role string) (m
 
 func (s *Service) UpdateCurrentProfile(ctx context.Context, userID, role string, req UpdateProfileRequest) error {
 	if req.YearsExperience != nil && *req.YearsExperience < 0 {
-		v := 0
-		req.YearsExperience = &v
+		return uploads.ErrInvalidInput
 	}
 	if req.HourlyRate != nil && *req.HourlyRate < 0 {
-		v := 0.0
-		req.HourlyRate = &v
+		return uploads.ErrInvalidInput
 	}
+	req.ProfileName = normalizeStringPtr(req.ProfileName)
 	req.Website = normalizeStringPtr(req.Website)
 	req.Phone = normalizeStringPtr(req.Phone)
 	req.About = normalizeStringPtr(req.About)
 	req.Bio = normalizeStringPtr(req.Bio)
+	req.Expertise = normalizeStringPtr(req.Expertise)
+	req.CompanyName = normalizeStringPtr(req.CompanyName)
+	req.ClientType = normalizeStringPtr(req.ClientType)
+	req.TaxNumber = normalizeStringPtr(req.TaxNumber)
+	req.ContactName = normalizeStringPtr(req.ContactName)
+	req.ContactPosition = normalizeStringPtr(req.ContactPosition)
+	req.Address = normalizeStringPtr(req.Address)
+	req.FirstName = normalizeStringPtr(req.FirstName)
+	req.LastName = normalizeStringPtr(req.LastName)
+	req.MiddleName = normalizeStringPtr(req.MiddleName)
+	req.City = normalizeStringPtr(req.City)
+	req.ExperienceLevel = normalizeStringPtr(req.ExperienceLevel)
+	req.Education = normalizeStringPtr(req.Education)
+	req.WorkFormat = normalizeStringPtr(req.WorkFormat)
 	if req.IIN != nil {
 		v := strings.TrimSpace(*req.IIN)
 		if v != "" && len(v) != 12 {

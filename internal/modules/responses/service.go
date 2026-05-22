@@ -60,12 +60,18 @@ func (s *Service) Create(ctx context.Context, orderID, userID, role string, req 
 	currency := s.defaultCurrency
 	if req.Currency != nil && strings.TrimSpace(*req.Currency) != "" {
 		currency = strings.ToUpper(strings.TrimSpace(*req.Currency))
+		if len(currency) != 3 {
+			return Response{}, ErrInvalidInput
+		}
 	}
 	if req.ProposedAmount != nil && *req.ProposedAmount <= 0 {
 		return Response{}, ErrInvalidInput
 	}
 	if req.CoverLetter != nil {
 		v := strings.TrimSpace(*req.CoverLetter)
+		if len(v) > 5000 {
+			return Response{}, ErrInvalidInput
+		}
 		req.CoverLetter = &v
 	}
 
@@ -93,7 +99,7 @@ func (s *Service) UpdateDraft(ctx context.Context, orderID, responseID, userID, 
 		}
 		return Response{}, err
 	}
-	if current.Status != "draft" {
+	if current.Status != StatusDraft {
 		return Response{}, ErrInvalidStatus
 	}
 	if req.ProposedAmount != nil && *req.ProposedAmount <= 0 {
@@ -101,6 +107,9 @@ func (s *Service) UpdateDraft(ctx context.Context, orderID, responseID, userID, 
 	}
 	if req.CoverLetter != nil {
 		v := strings.TrimSpace(*req.CoverLetter)
+		if len(v) > 5000 {
+			return Response{}, ErrInvalidInput
+		}
 		req.CoverLetter = &v
 	}
 	if req.Currency != nil {
@@ -137,14 +146,14 @@ func (s *Service) Submit(ctx context.Context, orderID, responseID, userID, role 
 		}
 		return Response{}, PaymentTransaction{}, payments.ChargeResponse{}, err
 	}
-	if current.Status != "draft" || current.OrderStatus != "published" {
+	if current.Status != StatusDraft || current.OrderStatus != "published" {
 		return Response{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrInvalidStatus
 	}
 	if current.CoverLetter == nil || strings.TrimSpace(*current.CoverLetter) == "" {
 		return Response{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrInvalidInput
 	}
 
-	charge, err := s.paymentProvider.CreateCharge(ctx, payments.ChargeRequest{OrderID: current.OrderID, AmountCents: int64(s.submissionFee * 100), CurrencyCode: s.defaultCurrency, Description: "Response submission fee"})
+	charge, err := s.paymentProvider.CreateCharge(ctx, payments.ChargeRequest{OrderID: current.ID, AmountCents: int64(s.submissionFee * 100), CurrencyCode: s.defaultCurrency, Description: "Response submission fee"})
 	if err != nil {
 		return Response{}, PaymentTransaction{}, payments.ChargeResponse{}, err
 	}
@@ -184,7 +193,7 @@ func (s *Service) Delete(ctx context.Context, orderID, responseID, userID, role 
 		}
 		return err
 	}
-	if current.Status != "draft" && current.Status != "cancelled" {
+	if !CanDelete(current.Status) {
 		return ErrInvalidStatus
 	}
 	return s.repo.SoftDelete(ctx, orderID, responseID, userID)

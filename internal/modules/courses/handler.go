@@ -65,7 +65,7 @@ func (h *Handler) GetCoachCourse(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"course": item, "materials": materials})
+	response.JSON(c, http.StatusOK, CourseDetailResponse{Course: item, Materials: materials})
 }
 
 func (h *Handler) ListCoachCourses(c *gin.Context) {
@@ -80,7 +80,7 @@ func (h *Handler) ListCoachCourses(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"items": items, "page": q.Page, "page_size": q.PageSize, "total": total})
+	response.JSON(c, http.StatusOK, response.ListEnvelope[Course]{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total})
 }
 
 func (h *Handler) PublishCourse(c *gin.Context) {
@@ -159,7 +159,7 @@ func (h *Handler) DeleteMaterial(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"status": "deleted"})
+	response.JSON(c, http.StatusOK, response.StatusResponse{Status: "deleted"})
 }
 
 func (h *Handler) ListCourses(c *gin.Context) {
@@ -174,7 +174,7 @@ func (h *Handler) ListCourses(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"items": items, "page": q.Page, "page_size": q.PageSize, "total": total})
+	response.JSON(c, http.StatusOK, response.ListEnvelope[Course]{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total})
 }
 
 func (h *Handler) GetCourse(c *gin.Context) {
@@ -188,7 +188,7 @@ func (h *Handler) GetCourse(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"course": item, "materials": materials})
+	response.JSON(c, http.StatusOK, CourseDetailResponse{Course: item, Materials: materials})
 }
 
 func (h *Handler) CreateAssignment(c *gin.Context) {
@@ -229,7 +229,7 @@ func (h *Handler) ListAdminAssignments(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"items": items, "page": q.Page, "page_size": q.PageSize, "total": total})
+	response.JSON(c, http.StatusOK, response.ListEnvelope[CourseAssignment]{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total})
 }
 
 func (h *Handler) ListMyAssignments(c *gin.Context) {
@@ -245,7 +245,7 @@ func (h *Handler) ListMyAssignments(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"items": items, "page": page, "page_size": size, "total": total})
+	response.JSON(c, http.StatusOK, response.ListEnvelope[CourseAssignment]{Items: items, Page: page, PageSize: size, Total: total})
 }
 
 func (h *Handler) GetMyAssignment(c *gin.Context) {

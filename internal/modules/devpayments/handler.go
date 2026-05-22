@@ -18,7 +18,7 @@ func (h *Handler) Confirm(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"status": "confirmed"})
+	response.JSON(c, http.StatusOK, response.StatusResponse{Status: "confirmed"})
 }
 
 func (h *Handler) Fail(c *gin.Context) {
@@ -26,7 +26,7 @@ func (h *Handler) Fail(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"status": "failed"})
+	response.JSON(c, http.StatusOK, response.StatusResponse{Status: "failed"})
 }
 
 func (h *Handler) handleErr(c *gin.Context, err error) {

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 
+	ordersmodule "buhpro/internal/modules/orders"
+	responsesmodule "buhpro/internal/modules/responses"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -42,13 +45,13 @@ func (r *Repository) SelectResponse(ctx context.Context, orderID, responseID, ac
 		return "", false, err
 	}
 
-	if orderStatus == "in_progress" && selectedResponseID != nil && *selectedResponseID == responseID && targetStatus == "accepted" {
+	if orderStatus == ordersmodule.StatusInProgress && selectedResponseID != nil && *selectedResponseID == responseID && targetStatus == responsesmodule.StatusAccepted {
 		return executorID, false, tx.Commit(ctx)
 	}
-	if orderStatus != "published" {
+	if !ordersmodule.CanTransition(orderStatus, ordersmodule.StatusInProgress) {
 		return "", false, ErrInvalidState
 	}
-	if targetStatus != "submitted" || !isPaid {
+	if targetStatus != responsesmodule.StatusSubmitted || !isPaid {
 		return "", false, ErrInvalidState
 	}
 	if selectedResponseID != nil {
@@ -145,11 +148,11 @@ func (r *Repository) GetSelection(ctx context.Context, orderID string) (Selectio
 }
 
 func (r *Repository) Complete(ctx context.Context, orderID, actorID string) (string, error) {
-	return r.transitionOrder(ctx, orderID, actorID, "in_progress", "completed", "completed by client")
+	return r.transitionOrder(ctx, orderID, actorID, ordersmodule.StatusInProgress, ordersmodule.StatusCompleted, "completed by client")
 }
 
 func (r *Repository) Reopen(ctx context.Context, orderID, actorID string) error {
-	_, err := r.transitionOrder(ctx, orderID, actorID, "completed", "in_progress", "reopened by client")
+	_, err := r.transitionOrder(ctx, orderID, actorID, ordersmodule.StatusCompleted, ordersmodule.StatusInProgress, "reopened by client")
 	return err
 }
 
@@ -169,7 +172,7 @@ func (r *Repository) transitionOrder(ctx context.Context, orderID, actorID, from
 	if err := tx.QueryRow(ctx, `SELECT status, selected_response_id, selected_executor_id, budget_amount, currency, payment_status, executor_paid_at::text FROM orders WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, orderID).Scan(&current, &selectedResponseID, &selectedExecutorID, &budgetAmount, &currency, &paymentStatus, &executorPaidAt); err != nil {
 		return "", err
 	}
-	if current != fromStatus {
+	if current != fromStatus || !ordersmodule.CanTransition(current, toStatus) {
 		return "", ErrInvalidState
 	}
 	if toStatus == "completed" && selectedResponseID == nil {

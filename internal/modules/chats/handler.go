@@ -28,7 +28,7 @@ func (h *Handler) ListMyChats(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"items": items, "page": q.Page, "page_size": q.PageSize, "total": total})
+	response.JSON(c, http.StatusOK, response.ListEnvelope[ChatSummary]{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total})
 }
 
 func (h *Handler) GetMyChatByID(c *gin.Context) {
@@ -57,20 +57,20 @@ func (h *Handler) ListMyMessages(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"items": items, "page": q.Page, "page_size": q.PageSize, "total": total, "order": "asc"})
+	response.JSON(c, http.StatusOK, MessagesListResponse{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total, Order: "asc"})
 }
 
 type sendMessageRequest struct {
-	Text          string   `json:"text"`
-	AttachmentIDs []string `json:"attachment_ids"`
+	Text          string   `json:"text" binding:"omitempty,max=5000"`
+	AttachmentIDs []string `json:"attachment_ids" binding:"omitempty,dive,uuid"`
 }
 
 type createDirectChatRequest struct {
-	ParticipantID string `json:"participant_id" binding:"required"`
+	ParticipantID string `json:"participant_id" binding:"required,uuid"`
 }
 
 type updateMessageRequest struct {
-	Text string `json:"text" binding:"required"`
+	Text string `json:"text" binding:"required,min=1,max=5000"`
 }
 
 func (h *Handler) CreateDirectChat(c *gin.Context) {
@@ -140,7 +140,7 @@ func (h *Handler) DeleteMyMessage(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"status": "deleted"})
+	response.JSON(c, http.StatusOK, response.StatusResponse{Status: "deleted"})
 }
 
 func (h *Handler) MarkMyChatRead(c *gin.Context) {
@@ -153,7 +153,7 @@ func (h *Handler) MarkMyChatRead(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"status": "ok"})
+	response.JSON(c, http.StatusOK, response.StatusResponse{Status: "ok"})
 }
 
 func (h *Handler) ListAdminChats(c *gin.Context) {
@@ -169,7 +169,7 @@ func (h *Handler) ListAdminChats(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"items": items, "page": page, "page_size": size, "total": total})
+	response.JSON(c, http.StatusOK, response.ListEnvelope[ChatSummary]{Items: items, Page: page, PageSize: size, Total: total})
 }
 
 func (h *Handler) GetAdminChatByID(c *gin.Context) {
@@ -198,7 +198,7 @@ func (h *Handler) ListAdminMessages(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"items": items, "page": q.Page, "page_size": q.PageSize, "total": total, "order": "asc"})
+	response.JSON(c, http.StatusOK, MessagesListResponse{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total, Order: "asc"})
 }
 
 func (h *Handler) handleErr(c *gin.Context, err error) {

@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	ordersmodule "buhpro/internal/modules/orders"
+	responsesmodule "buhpro/internal/modules/responses"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -66,10 +69,6 @@ func (r *Repository) Confirm(ctx context.Context, id string) (ConfirmResult, err
 		return ConfirmResult{}, fmt.Errorf("cannot confirm payment with status %s", payment.Status)
 	}
 
-	if _, err := tx.Exec(ctx, `UPDATE payment_transactions SET status='succeeded', paid_at=NOW() WHERE id=$1`, id); err != nil {
-		return ConfirmResult{}, err
-	}
-
 	switch payment.ObjectType {
 	case "order_posting":
 		if payment.OrderID == nil {
@@ -79,33 +78,55 @@ func (r *Repository) Confirm(ctx context.Context, id string) (ConfirmResult, err
 		if err := tx.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1 FOR UPDATE`, *payment.OrderID).Scan(&old); err != nil {
 			return ConfirmResult{}, err
 		}
-		if old == "payment_pending" {
-			if _, err := tx.Exec(ctx, `UPDATE orders SET status='published', published_at=NOW(), updated_at=NOW() WHERE id=$1`, *payment.OrderID); err != nil {
-				return ConfirmResult{}, err
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO order_status_history(order_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'published',$3,$4)`, *payment.OrderID, old, payment.UserID, "payment confirmed (dev)"); err != nil {
-				return ConfirmResult{}, err
-			}
-			result.OrderPublishedForClient = &OrderPublishedEvent{OrderID: *payment.OrderID, ClientID: payment.UserID}
+		if !ordersmodule.CanTransition(old, ordersmodule.StatusPublished) {
+			return ConfirmResult{}, fmt.Errorf("cannot publish order with status %s", old)
 		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE orders
+			SET status='published',
+			    published_at=NOW(),
+			    payment_status='paid',
+			    promoted_until=CASE WHEN promotion_options ? 'top' THEN NOW() + INTERVAL '72 hours' ELSE promoted_until END,
+			    pinned_until=CASE WHEN promotion_options ? 'pin' THEN NOW() + INTERVAL '30 days' ELSE pinned_until END,
+			    highlighted_until=CASE WHEN promotion_options ? 'highlight' THEN NOW() + INTERVAL '30 days' ELSE highlighted_until END,
+			    updated_at=NOW()
+			WHERE id=$1
+		`, *payment.OrderID); err != nil {
+			return ConfirmResult{}, err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO order_status_history(order_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'published',$3,$4)`, *payment.OrderID, old, payment.UserID, "payment confirmed (dev)"); err != nil {
+			return ConfirmResult{}, err
+		}
+		result.OrderPublishedForClient = &OrderPublishedEvent{OrderID: *payment.OrderID, ClientID: payment.UserID}
 	case "response_submission":
 		if payment.ResponseID == nil {
 			return ConfirmResult{}, fmt.Errorf("response id is required")
 		}
 		var orderID string
 		var old string
-		if err := tx.QueryRow(ctx, `SELECT status, order_id FROM responses WHERE id=$1 FOR UPDATE`, *payment.ResponseID).Scan(&old, &orderID); err != nil {
+		var clientID string
+		if err := tx.QueryRow(ctx, `
+			SELECT r.status, r.order_id, o.client_id
+			FROM responses r
+			JOIN orders o ON o.id = r.order_id
+			WHERE r.id=$1
+			FOR UPDATE
+		`, *payment.ResponseID).Scan(&old, &orderID, &clientID); err != nil {
 			return ConfirmResult{}, err
 		}
-		if old == "payment_pending" {
-			if _, err := tx.Exec(ctx, `UPDATE responses SET status='submitted', is_paid=TRUE, paid_at=NOW(), updated_at=NOW() WHERE id=$1`, *payment.ResponseID); err != nil {
-				return ConfirmResult{}, err
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO response_status_history(response_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'submitted',$3,$4)`, *payment.ResponseID, old, payment.UserID, "payment confirmed (dev)"); err != nil {
-				return ConfirmResult{}, err
-			}
-			result.ResponseSubmittedClient = &ResponseSubmittedEvent{ResponseID: *payment.ResponseID, OrderID: orderID, ClientID: payment.UserID}
+		if !responsesmodule.CanTransition(old, responsesmodule.StatusSubmitted) {
+			return ConfirmResult{}, fmt.Errorf("cannot submit response with status %s", old)
 		}
+		if _, err := tx.Exec(ctx, `UPDATE responses SET status='submitted', is_paid=TRUE, paid_at=NOW(), updated_at=NOW() WHERE id=$1`, *payment.ResponseID); err != nil {
+			return ConfirmResult{}, err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO response_status_history(response_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'submitted',$3,$4)`, *payment.ResponseID, old, payment.UserID, "payment confirmed (dev)"); err != nil {
+			return ConfirmResult{}, err
+		}
+		result.ResponseSubmittedClient = &ResponseSubmittedEvent{ResponseID: *payment.ResponseID, OrderID: orderID, ClientID: clientID}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE payment_transactions SET status='succeeded', paid_at=NOW() WHERE id=$1`, id); err != nil {
+		return ConfirmResult{}, err
 	}
 	return result, tx.Commit(ctx)
 }
@@ -131,10 +152,6 @@ func (r *Repository) Fail(ctx context.Context, id string) error {
 		return fmt.Errorf("cannot fail payment with status %s", payment.Status)
 	}
 
-	if _, err := tx.Exec(ctx, `UPDATE payment_transactions SET status='failed', failed_at=NOW() WHERE id=$1`, id); err != nil {
-		return err
-	}
-
 	switch payment.ObjectType {
 	case "order_posting":
 		if payment.OrderID == nil {
@@ -144,13 +161,14 @@ func (r *Repository) Fail(ctx context.Context, id string) error {
 		if err := tx.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1 FOR UPDATE`, *payment.OrderID).Scan(&old); err != nil {
 			return err
 		}
-		if old == "payment_pending" {
-			if _, err := tx.Exec(ctx, `UPDATE orders SET status='draft', updated_at=NOW() WHERE id=$1`, *payment.OrderID); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO order_status_history(order_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'draft',$3,$4)`, *payment.OrderID, old, payment.UserID, "payment failed (dev)"); err != nil {
-				return err
-			}
+		if !ordersmodule.CanTransition(old, ordersmodule.StatusDraft) {
+			return fmt.Errorf("cannot return order with status %s to draft", old)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE orders SET status='draft', payment_status='unpaid', updated_at=NOW() WHERE id=$1`, *payment.OrderID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO order_status_history(order_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'draft',$3,$4)`, *payment.OrderID, old, payment.UserID, "payment failed (dev)"); err != nil {
+			return err
 		}
 	case "response_submission":
 		if payment.ResponseID == nil {
@@ -160,14 +178,18 @@ func (r *Repository) Fail(ctx context.Context, id string) error {
 		if err := tx.QueryRow(ctx, `SELECT status FROM responses WHERE id=$1 FOR UPDATE`, *payment.ResponseID).Scan(&old); err != nil {
 			return err
 		}
-		if old == "payment_pending" {
-			if _, err := tx.Exec(ctx, `UPDATE responses SET status='draft', updated_at=NOW() WHERE id=$1`, *payment.ResponseID); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO response_status_history(response_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'draft',$3,$4)`, *payment.ResponseID, old, payment.UserID, "payment failed (dev)"); err != nil {
-				return err
-			}
+		if !responsesmodule.CanTransition(old, responsesmodule.StatusDraft) {
+			return fmt.Errorf("cannot return response with status %s to draft", old)
 		}
+		if _, err := tx.Exec(ctx, `UPDATE responses SET status='draft', updated_at=NOW() WHERE id=$1`, *payment.ResponseID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO response_status_history(response_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'draft',$3,$4)`, *payment.ResponseID, old, payment.UserID, "payment failed (dev)"); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE payment_transactions SET status='failed', failed_at=NOW() WHERE id=$1`, id); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

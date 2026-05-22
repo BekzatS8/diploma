@@ -12,6 +12,17 @@ type ErrorBody struct {
 	RequestID string `json:"request_id,omitempty"`
 }
 
+type StatusResponse struct {
+	Status string `json:"status"`
+}
+
+type ListEnvelope[T any] struct {
+	Items    []T   `json:"items"`
+	Page     int   `json:"page"`
+	PageSize int   `json:"page_size"`
+	Total    int64 `json:"total"`
+}
+
 func JSONError(c *gin.Context, status int, code, message string) {
 	requestID, _ := c.Get("request_id")
 	c.AbortWithStatusJSON(status, ErrorResponse{

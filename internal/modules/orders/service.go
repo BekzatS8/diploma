@@ -48,6 +48,9 @@ func (s *Service) Create(ctx context.Context, userID, role string, req CreateOrd
 	currency := s.defaultCurrency
 	if req.Currency != nil && strings.TrimSpace(*req.Currency) != "" {
 		currency = strings.ToUpper(strings.TrimSpace(*req.Currency))
+		if len(currency) != 3 {
+			return Order{}, ErrInvalidInput
+		}
 	}
 	region := normalizeString(req.Region)
 	promotions := normalizePromotions(req.Promotions)
@@ -105,7 +108,7 @@ func (s *Service) UpdateDraft(ctx context.Context, userID, role, id string, req 
 		}
 		return Order{}, err
 	}
-	if current.Status != "draft" {
+	if current.Status != StatusDraft {
 		return Order{}, ErrInvalidStatusTransition
 	}
 
@@ -171,7 +174,7 @@ func (s *Service) DeleteMy(ctx context.Context, userID, role, id string) error {
 		}
 		return err
 	}
-	if order.Status != "draft" && order.Status != "cancelled" {
+	if !CanDelete(order.Status) {
 		return ErrInvalidStatusTransition
 	}
 	return s.repo.SoftDelete(ctx, id, userID)
@@ -188,7 +191,7 @@ func (s *Service) Submit(ctx context.Context, userID, role, id string) (Order, P
 		}
 		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, err
 	}
-	if order.Status != "draft" {
+	if order.Status != StatusDraft {
 		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrInvalidStatusTransition
 	}
 	if strings.TrimSpace(order.Title) == "" || strings.TrimSpace(order.Description) == "" || order.BudgetAmount <= 0 || order.CategoryID == nil {
@@ -198,17 +201,17 @@ func (s *Service) Submit(ctx context.Context, userID, role, id string) (Order, P
 	promotionFee := promotionFee(order.PromotionOptions)
 	escrowAmount := order.BudgetAmount
 	totalCharge := s.postingFee + promotionFee + escrowAmount
-	updated, tx, err := s.repo.SubmitWithWallet(ctx, id, userID, s.postingFee, promotionFee, escrowAmount, totalCharge, s.defaultCurrency, order.PromotionOptions)
+	charge, err := s.paymentProvider.CreateCharge(ctx, payments.ChargeRequest{OrderID: order.ID, AmountCents: int64(totalCharge * 100), CurrencyCode: s.defaultCurrency, Description: "Order posting fee"})
+	if err != nil {
+		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, err
+	}
+
+	updated, tx, err := s.repo.SubmitWithPayment(ctx, id, userID, s.postingFee, promotionFee, escrowAmount, totalCharge, s.defaultCurrency, s.paymentProviderName, charge.TransactionID, charge.RedirectURL)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrOrderNotFound
 		}
 		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, err
-	}
-	charge := payments.ChargeResponse{
-		TransactionID: tx.ProviderTransactionIDValue(),
-		RedirectURL:   "",
-		Status:        tx.Status,
 	}
 	return updated, tx, charge, nil
 }
@@ -242,7 +245,7 @@ func (s *Service) GetByID(ctx context.Context, id string, userID string, role st
 	if order.DeletedAt != nil {
 		return Order{}, ErrOrderNotFound
 	}
-	if order.Status == "published" {
+	if order.Status == StatusPublished {
 		return order, nil
 	}
 	if role == "admin" {
@@ -330,11 +333,4 @@ func promotionFee(items []string) float64 {
 		}
 	}
 	return total
-}
-
-func (t PaymentTransaction) ProviderTransactionIDValue() string {
-	if t.ProviderTransactionID == nil {
-		return ""
-	}
-	return *t.ProviderTransactionID
 }

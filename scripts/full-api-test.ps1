@@ -401,16 +401,43 @@ function New-OrderDraft {
             category_slug = "tax"
             budget_amount = $Budget
             currency      = "KZT"
+            deadline_at   = (Get-Date).ToUniversalTime().AddDays(14).ToString("o")
             region        = "online"
         } `
         -Expected @(201) `
         -Name "orders POST $Title"
 }
 
+function Confirm-OrderPostingPayment {
+    param(
+        [string]$BaseUrl,
+        [object]$Admin,
+        [object]$SubmitResult,
+        [string]$Name
+    )
+
+    if (-not $SubmitResult.Ok -or -not (Require-Value $SubmitResult.Json.payment.transaction_id "$Name payment transaction id")) {
+        return $false
+    }
+
+    Write-Check "$Name is payment_pending" ($SubmitResult.Json.order.status -eq "payment_pending") "status=$($SubmitResult.Json.order.status)"
+
+    $confirm = Invoke-Api `
+        -BaseUrl $BaseUrl `
+        -Method "POST" `
+        -Path "/api/v1/dev/payments/$($SubmitResult.Json.payment.transaction_id)/confirm" `
+        -Token $Admin.AccessToken `
+        -Expected @(200) `
+        -Name "dev/payments/{txId}/confirm POST $Name"
+
+    return $confirm.Ok
+}
+
 function New-PublishedOrder {
     param(
         [string]$BaseUrl,
         [object]$Client,
+        [object]$Admin,
         [string]$Title,
         [double]$Budget = 12000
     )
@@ -429,7 +456,19 @@ function New-PublishedOrder {
     if (-not $submit.Ok) {
         return $null
     }
-    Write-Check "$Title is published" ($submit.Json.order.status -eq "published") "status=$($submit.Json.order.status)"
+    if (-not (Confirm-OrderPostingPayment -BaseUrl $BaseUrl -Admin $Admin -SubmitResult $submit -Name $Title)) {
+        return $null
+    }
+    $published = Invoke-Api `
+        -BaseUrl $BaseUrl `
+        -Method "GET" `
+        -Path "/api/v1/orders/$orderId" `
+        -Expected @(200) `
+        -Name "orders/{id} GET after publish $Title"
+    if (-not $published.Ok) {
+        return $null
+    }
+    Write-Check "$Title is published" ($published.Json.status -eq "published") "status=$($published.Json.status)"
     return $orderId
 }
 
@@ -617,16 +656,39 @@ function Run-FullApiTestsForBaseUrl {
         Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/orders/my/$($cancelOrder.Json.id)/cancel" -Token $client.AccessToken -Expected @(200) -Name "orders/my/{id}/cancel POST" | Out-Null
     }
 
+    $failOrder = New-OrderDraft -BaseUrl $baseUrl -Token $client.AccessToken -Title "Full API Fail Order Payment $stamp" -Budget 1000
+    if ($failOrder.Ok -and (Require-Value $failOrder.Json.id "fail order id")) {
+        $failOrderId = $failOrder.Json.id
+        $failOrderSubmit = Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/orders/my/$failOrderId/submit" -Token $client.AccessToken -Expected @(200) -Name "orders/my/{id}/submit fail payment flow"
+        if ($failOrderSubmit.Ok -and (Require-Value $failOrderSubmit.Json.payment.transaction_id "fail order payment transaction id")) {
+            Write-Check "fail order is payment_pending" ($failOrderSubmit.Json.order.status -eq "payment_pending") "status=$($failOrderSubmit.Json.order.status)"
+            Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/dev/payments/$($failOrderSubmit.Json.payment.transaction_id)/fail" -Token $admin.AccessToken -Expected @(200) -Name "dev/payments/{txId}/fail POST order" | Out-Null
+            $failOrderAfter = Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/orders/my/$failOrderId" -Token $client.AccessToken -Expected @(200) -Name "orders/my/{id} GET after failed payment"
+            if ($failOrderAfter.Ok) {
+                Write-Check "failed order returns to draft" ($failOrderAfter.Json.order.status -eq "draft") "status=$($failOrderAfter.Json.order.status)"
+            }
+        }
+    }
+
     $submitOrder = Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/orders/my/$orderId/submit" -Token $client.AccessToken -Expected @(200) -Name "orders/my/{id}/submit POST"
     if (-not $submitOrder.Ok) {
         return
     }
-    Write-Check "main order is published" ($submitOrder.Json.order.status -eq "published") "status=$($submitOrder.Json.order.status)"
+    if (-not (Confirm-OrderPostingPayment -BaseUrl $baseUrl -Admin $admin -SubmitResult $submitOrder -Name "main order")) {
+        return
+    }
+    $publishedOrder = Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/orders/$orderId" -Expected @(200) -Name "orders/{id} GET public after publish"
+    if (-not $publishedOrder.Ok) {
+        return
+    }
+    Write-Check "main order is published" ($publishedOrder.Json.status -eq "published") "status=$($publishedOrder.Json.status)"
 
-    Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/orders?page=1&page_size=5&category=tax" -Expected @(200) -Name "orders GET list" | Out-Null
+    $deadlineBefore = [System.Uri]::EscapeDataString((Get-Date).ToUniversalTime().AddDays(30).ToString("o"))
+    Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/orders?page=1&page_size=5&category=tax&budget_min=1000&budget_max=20000&deadline_before=$deadlineBefore&region=online&q=Full" -Expected @(200) -Name "orders GET public filters" | Out-Null
+    Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/orders?page=0&page_size=5" -Expected @(400) -Name "orders GET invalid pagination" | Out-Null
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/orders/$orderId" -Expected @(200) -Name "orders/{id} GET public" | Out-Null
 
-    $deleteResponseOrderId = New-PublishedOrder -BaseUrl $baseUrl -Client $client -Title "Full API Delete Response Order $stamp" -Budget 2000
+    $deleteResponseOrderId = New-PublishedOrder -BaseUrl $baseUrl -Client $client -Admin $admin -Title "Full API Delete Response Order $stamp" -Budget 2000
     if ($null -ne $deleteResponseOrderId) {
         $deleteResponse = Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/orders/$deleteResponseOrderId/responses" -Token $executor.AccessToken -Body @{ cover_letter = "Delete this draft response."; proposed_amount = 1500 } -Expected @(201) -Name "orders/{id}/responses POST delete flow"
         if ($deleteResponse.Ok -and (Require-Value $deleteResponse.Json.id "delete response id")) {
@@ -634,7 +696,7 @@ function Run-FullApiTestsForBaseUrl {
         }
     }
 
-    $failPaymentOrderId = New-PublishedOrder -BaseUrl $baseUrl -Client $client -Title "Full API Fail Payment Order $stamp" -Budget 2000
+    $failPaymentOrderId = New-PublishedOrder -BaseUrl $baseUrl -Client $client -Admin $admin -Title "Full API Fail Payment Order $stamp" -Budget 2000
     if ($null -ne $failPaymentOrderId) {
         $failResponse = Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/orders/$failPaymentOrderId/responses" -Token $executor.AccessToken -Body @{ cover_letter = "Fail this response payment."; proposed_amount = 1500 } -Expected @(201) -Name "orders/{id}/responses POST fail flow"
         if ($failResponse.Ok -and (Require-Value $failResponse.Json.id "fail response id")) {

@@ -50,10 +50,13 @@ func (s *Service) Credit(ctx context.Context, actorID, role, targetUserID string
 	if _, err := uuid.Parse(targetUserID); err != nil {
 		return Wallet{}, ErrInvalidInput
 	}
-	if amount <= 0 {
+	if amount <= 0 || amount > 100000000 {
 		return Wallet{}, ErrInvalidInput
 	}
 	reason = strings.TrimSpace(reason)
+	if len(reason) > 100 {
+		return Wallet{}, ErrInvalidInput
+	}
 	if reason == "" {
 		reason = "admin_credit"
 	}

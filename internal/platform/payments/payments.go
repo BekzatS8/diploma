@@ -1,6 +1,10 @@
 package payments
 
-import "context"
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
 
 type ChargeRequest struct {
 	OrderID      string
@@ -28,7 +32,7 @@ func NewMock() Provider {
 
 func (m *MockProvider) CreateCharge(_ context.Context, req ChargeRequest) (ChargeResponse, error) {
 	return ChargeResponse{
-		TransactionID: "mock_txn_" + req.OrderID,
+		TransactionID: "mock_txn_" + req.OrderID + "_" + uuid.NewString(),
 		Status:        "pending",
 		RedirectURL:   "https://mock-payments.local/checkout/" + req.OrderID,
 	}, nil

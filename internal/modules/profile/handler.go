@@ -49,7 +49,7 @@ func (h *Handler) Patch(c *gin.Context) {
 	}
 
 	if err := h.service.UpdateCurrentProfile(c.Request.Context(), user.UserID, user.PrimaryRole(), req); err != nil {
-		response.JSONError(c, http.StatusInternalServerError, "internal_error", "Failed to update profile")
+		h.handleErr(c, err)
 		return
 	}
 

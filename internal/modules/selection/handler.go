@@ -24,7 +24,7 @@ func (h *Handler) SelectResponse(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"status": "selected"})
+	response.JSON(c, http.StatusOK, response.StatusResponse{Status: "selected"})
 }
 
 func (h *Handler) GetSelection(c *gin.Context) {
@@ -51,7 +51,7 @@ func (h *Handler) Complete(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"status": "completed"})
+	response.JSON(c, http.StatusOK, response.StatusResponse{Status: "completed"})
 }
 
 func (h *Handler) Reopen(c *gin.Context) {
@@ -64,7 +64,7 @@ func (h *Handler) Reopen(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"status": "reopened"})
+	response.JSON(c, http.StatusOK, response.StatusResponse{Status: "reopened"})
 }
 
 func (h *Handler) handleErr(c *gin.Context, err error) {

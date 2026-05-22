@@ -115,7 +115,7 @@ func (s *Service) SendMessageMy(ctx context.Context, chatID, userID, role string
 	}
 	body := strings.TrimSpace(text)
 	uploadIDs = normalizeUploadIDs(uploadIDs)
-	if body == "" && len(uploadIDs) == 0 {
+	if len(body) > 5000 || (body == "" && len(uploadIDs) == 0) {
 		return Message{}, ErrInvalidInput
 	}
 	result, err := s.repo.CreateMessage(ctx, chatID, userID, body, uploadIDs)
@@ -142,7 +142,7 @@ func (s *Service) UpdateMessageMy(ctx context.Context, chatID, messageID, userID
 		return Message{}, ErrForbidden
 	}
 	body := strings.TrimSpace(text)
-	if body == "" {
+	if body == "" || len(body) > 5000 {
 		return Message{}, ErrInvalidInput
 	}
 	item, err := s.repo.UpdateMessage(ctx, chatID, messageID, userID, body)

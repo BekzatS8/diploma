@@ -3,15 +3,15 @@ package responses
 import "time"
 
 type CreateResponseRequest struct {
-	CoverLetter    *string  `json:"cover_letter"`
-	ProposedAmount *float64 `json:"proposed_amount"`
-	Currency       *string  `json:"currency"`
+	CoverLetter    *string  `json:"cover_letter" binding:"omitempty,max=5000"`
+	ProposedAmount *float64 `json:"proposed_amount" binding:"omitempty,gt=0"`
+	Currency       *string  `json:"currency" binding:"omitempty,len=3,alpha"`
 }
 
 type UpdateResponseRequest struct {
-	CoverLetter    *string  `json:"cover_letter"`
-	ProposedAmount *float64 `json:"proposed_amount"`
-	Currency       *string  `json:"currency"`
+	CoverLetter    *string  `json:"cover_letter" binding:"omitempty,max=5000"`
+	ProposedAmount *float64 `json:"proposed_amount" binding:"omitempty,gt=0"`
+	Currency       *string  `json:"currency" binding:"omitempty,len=3,alpha"`
 }
 
 type ListQuery struct {

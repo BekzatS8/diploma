@@ -57,6 +57,14 @@ type Message struct {
 	DeletedAt    *time.Time          `json:"deleted_at,omitempty"`
 }
 
+type MessagesListResponse struct {
+	Items    []Message `json:"items"`
+	Page     int       `json:"page"`
+	PageSize int       `json:"page_size"`
+	Total    int64     `json:"total"`
+	Order    string    `json:"order"`
+}
+
 type ListChatsQuery struct {
 	Page     int
 	PageSize int

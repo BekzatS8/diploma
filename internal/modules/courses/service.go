@@ -129,6 +129,10 @@ func (s *Service) AddMaterial(ctx context.Context, courseID, userID, role string
 	if role != "coach" && role != "admin" {
 		return CourseMaterial{}, ErrForbidden
 	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		return CourseMaterial{}, ErrInvalidInput
+	}
 	if _, _, err := s.GetCoachCourse(ctx, courseID, userID, role); err != nil {
 		return CourseMaterial{}, err
 	}
@@ -145,9 +149,12 @@ func (s *Service) AddMaterial(ctx context.Context, courseID, userID, role string
 	}
 	position := 0
 	if req.Position != nil {
+		if *req.Position < 0 {
+			return CourseMaterial{}, ErrInvalidInput
+		}
 		position = *req.Position
 	}
-	item, err := s.repo.CreateMaterial(ctx, CreateMaterialParams{CourseID: courseID, Title: strings.TrimSpace(req.Title), MaterialType: mt, UploadID: uploadID, URL: normalizeNullable(req.URL), Content: normalizeNullable(req.Content), SortOrder: position})
+	item, err := s.repo.CreateMaterial(ctx, CreateMaterialParams{CourseID: courseID, Title: title, MaterialType: mt, UploadID: uploadID, URL: normalizeNullable(req.URL), Content: normalizeNullable(req.Content), SortOrder: position})
 	if err != nil {
 		return CourseMaterial{}, err
 	}
@@ -162,6 +169,12 @@ func (s *Service) UpdateMaterial(ctx context.Context, courseID, materialID, user
 		return CourseMaterial{}, err
 	}
 	var materialType *string
+	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
+		return CourseMaterial{}, ErrInvalidInput
+	}
+	if req.Position != nil && *req.Position < 0 {
+		return CourseMaterial{}, ErrInvalidInput
+	}
 	uploadID, err := normalizeUUIDNullable(req.UploadID)
 	if err != nil {
 		return CourseMaterial{}, ErrInvalidInput

@@ -169,7 +169,7 @@ func (r *Repository) ListPublic(ctx context.Context, q PublicOrdersQuery) ([]Ord
 		argPos++
 	}
 	if q.DeadlineBefore != nil {
-		where = append(where, fmt.Sprintf("(o.deadline_at IS NULL OR o.deadline_at <= $%d)", argPos))
+		where = append(where, fmt.Sprintf("o.deadline_at IS NOT NULL AND o.deadline_at <= $%d", argPos))
 		args = append(args, *q.DeadlineBefore)
 		argPos++
 	}
@@ -272,7 +272,7 @@ func (r *Repository) LatestPaymentByOrderID(ctx context.Context, orderID string)
 	return &t, nil
 }
 
-func (r *Repository) SubmitWithWallet(ctx context.Context, orderID, clientID string, postingFee, promotionFee, escrowAmount, totalCharge float64, currency string, promotions []string) (Order, PaymentTransaction, error) {
+func (r *Repository) SubmitWithPayment(ctx context.Context, orderID, clientID string, postingFee, promotionFee, escrowAmount, totalCharge float64, currency, provider, providerRef, checkoutURL string) (Order, PaymentTransaction, error) {
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Order{}, PaymentTransaction{}, err
@@ -281,7 +281,6 @@ func (r *Repository) SubmitWithWallet(ctx context.Context, orderID, clientID str
 
 	var currentStatus string
 	var selectedExecutorID *string
-	var walletBalance float64
 	currentRow := tx.QueryRow(ctx, `
 		SELECT status, selected_executor_id
 		FROM orders
@@ -292,55 +291,25 @@ func (r *Repository) SubmitWithWallet(ctx context.Context, orderID, clientID str
 		return Order{}, PaymentTransaction{}, err
 	}
 
-	if currentStatus != "draft" {
+	if !CanTransition(currentStatus, StatusPaymentPending) || selectedExecutorID != nil {
 		return Order{}, PaymentTransaction{}, ErrInvalidStatusTransition
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO wallets(user_id, balance, currency)
-		VALUES($1, 0, $2)
-		ON CONFLICT (user_id) DO NOTHING
-	`, clientID, currency); err != nil {
-		return Order{}, PaymentTransaction{}, err
-	}
-	if err := tx.QueryRow(ctx, `SELECT balance::float8 FROM wallets WHERE user_id=$1 FOR UPDATE`, clientID).Scan(&walletBalance); err != nil {
-		return Order{}, PaymentTransaction{}, err
-	}
-	if walletBalance < totalCharge {
-		return Order{}, PaymentTransaction{}, ErrInsufficientBalance
-	}
-
-	var promotedUntil, pinnedUntil, highlightedUntil any
-	now := time.Now()
-	for _, p := range promotions {
-		switch p {
-		case "top", "promotion_top", "raise_top":
-			promotedUntil = now.Add(72 * time.Hour)
-		case "pin", "pinned", "promotion_pin":
-			pinnedUntil = now.Add(30 * 24 * time.Hour)
-		case "highlight", "highlighted", "promotion_highlight":
-			highlightedUntil = now.Add(30 * 24 * time.Hour)
-		}
 	}
 
 	row := tx.QueryRow(ctx, `
 		UPDATE orders
-		SET status = 'published',
-		    published_at = COALESCE(published_at, NOW()),
+		SET status = 'payment_pending',
 		    posting_fee = $2,
 		    promotion_fee = $3,
 		    escrow_amount = $4,
 		    total_charge = $5,
-		    payment_status = 'paid',
-		    promoted_until = $6,
-		    pinned_until = $7,
-		    highlighted_until = $8,
+		    payment_status = 'unpaid',
 		    updated_at = NOW()
 		WHERE id = $1
 		RETURNING id, client_id, category_id, title, description, budget_amount, currency,
 		       deadline_at, region, promotion_options, posting_fee, promotion_fee, escrow_amount, total_charge, payment_status,
 		       promoted_until, pinned_until, highlighted_until, executor_paid_at,
 		       status, selected_executor_id, published_at, completed_at, cancelled_at, created_at, updated_at, deleted_at
-	`, orderID, postingFee, promotionFee, escrowAmount, totalCharge, promotedUntil, pinnedUntil, highlightedUntil)
+	`, orderID, postingFee, promotionFee, escrowAmount, totalCharge)
 	updated, err := scanOrder(row)
 	if err != nil {
 		return Order{}, PaymentTransaction{}, err
@@ -348,33 +317,20 @@ func (r *Repository) SubmitWithWallet(ctx context.Context, orderID, clientID str
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO order_status_history (order_id, old_status, new_status, changed_by, reason)
-		VALUES ($1, $2, 'published', $3, $4)
-	`, orderID, currentStatus, clientID, "paid from internal wallet"); err != nil {
-		return Order{}, PaymentTransaction{}, err
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE wallets
-		SET balance=balance-$2, updated_at=NOW()
-		WHERE user_id=$1
-	`, clientID, totalCharge); err != nil {
-		return Order{}, PaymentTransaction{}, err
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO wallet_transactions(user_id, amount, direction, currency, reason, order_id, created_by, metadata)
-		VALUES($1, $2, 'debit', $3, 'order_submit', $4, $1, jsonb_build_object('posting_fee',$5::numeric,'promotion_fee',$6::numeric,'escrow_amount',$7::numeric))
-	`, clientID, totalCharge, currency, orderID, postingFee, promotionFee, escrowAmount); err != nil {
+		VALUES ($1, $2, 'payment_pending', $3, $4)
+	`, orderID, currentStatus, clientID, "order submitted for payment"); err != nil {
 		return Order{}, PaymentTransaction{}, err
 	}
 
 	payRow := tx.QueryRow(ctx, `
 		INSERT INTO payment_transactions (
 			user_id, object_type, object_id, order_id, provider, provider_transaction_id,
-			amount, currency, status, paid_at, metadata
+			amount, currency, status, metadata
 		)
-		VALUES ($1, 'order_posting', $2, $2, 'internal_wallet', $3, $4, $5, 'succeeded', NOW(), $6::jsonb)
+		VALUES ($1, 'order_posting', $2, $2, $3, $4, $5, $6, 'pending', $7::jsonb)
 		RETURNING id::text, order_id::text, provider, provider_transaction_id, amount, currency, status, initiated_at
-	`, clientID, orderID, "wallet-"+orderID, totalCharge, currency,
-		fmt.Sprintf(`{"posting_fee":%v,"promotion_fee":%v,"escrow_amount":%v}`, postingFee, promotionFee, escrowAmount),
+	`, clientID, orderID, provider, providerRef, totalCharge, currency,
+		fmt.Sprintf(`{"checkout_url":%q,"posting_fee":%v,"promotion_fee":%v,"escrow_amount":%v}`, checkoutURL, postingFee, promotionFee, escrowAmount),
 	)
 	var payment PaymentTransaction
 	if err := payRow.Scan(&payment.ID, &payment.OrderID, &payment.Provider, &payment.ProviderTransactionID, &payment.Amount, &payment.Currency, &payment.Status, &payment.InitiatedAt); err != nil {
@@ -405,10 +361,7 @@ func (r *Repository) Cancel(ctx context.Context, orderID, clientID, reason strin
 		return Order{}, err
 	}
 
-	if currentStatus != "draft" && currentStatus != "payment_pending" && currentStatus != "published" {
-		return Order{}, ErrInvalidStatusTransition
-	}
-	if currentStatus == "published" && selectedExecutorID != nil {
+	if !CanCancel(currentStatus, selectedExecutorID) {
 		return Order{}, ErrInvalidStatusTransition
 	}
 
@@ -424,6 +377,16 @@ func (r *Repository) Cancel(ctx context.Context, orderID, clientID, reason strin
 	updated, err := scanOrder(row)
 	if err != nil {
 		return Order{}, err
+	}
+
+	if currentStatus == StatusPaymentPending {
+		if _, err := tx.Exec(ctx, `
+			UPDATE payment_transactions
+			SET status='cancelled', failed_at=NOW()
+			WHERE order_id=$1 AND object_type='order_posting' AND status='pending'
+		`, orderID); err != nil {
+			return Order{}, err
+		}
 	}
 
 	if _, err := tx.Exec(ctx, `

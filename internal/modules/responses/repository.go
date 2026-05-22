@@ -214,7 +214,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (Response, error) {
 }
 
 func (r *Repository) ListForClientOrder(ctx context.Context, orderID string, q ListQuery) ([]Response, int64, error) {
-	where := []string{"r.order_id=$1", "r.deleted_at IS NULL", "r.status='submitted'", "r.is_paid=TRUE"}
+	where := []string{"r.order_id=$1", "r.deleted_at IS NULL", "r.status IN ('submitted','accepted')", "r.is_paid=TRUE"}
 	args := []any{orderID}
 	argPos := 2
 	if q.Status != "" {
@@ -254,7 +254,7 @@ func (r *Repository) GetClientOrderResponse(ctx context.Context, orderID, respon
 		SELECT r.id, r.order_id, r.executor_id, r.cover_letter, r.proposed_amount, r.currency, r.status, r.is_paid, r.paid_at,
 		       r.created_at, r.updated_at, r.deleted_at, o.client_id, o.status, o.title
 		FROM responses r JOIN orders o ON o.id=r.order_id
-		WHERE r.order_id=$1 AND r.id=$2 AND r.deleted_at IS NULL AND r.status='submitted' AND r.is_paid=TRUE
+		WHERE r.order_id=$1 AND r.id=$2 AND r.deleted_at IS NULL AND r.status IN ('submitted','accepted') AND r.is_paid=TRUE
 	`, orderID, responseID)
 	return scanResponseWithOrder(row)
 }
@@ -275,7 +275,7 @@ func (r *Repository) SubmitWithPayment(ctx context.Context, orderID, responseID,
 	`, responseID, orderID, executorID).Scan(&currentStatus, &orderStatus); err != nil {
 		return Response{}, PaymentTransaction{}, err
 	}
-	if currentStatus != "draft" || orderStatus != "published" {
+	if !CanTransition(currentStatus, StatusPaymentPending) || orderStatus != "published" {
 		return Response{}, PaymentTransaction{}, ErrInvalidStatus
 	}
 
@@ -322,13 +322,22 @@ func (r *Repository) Cancel(ctx context.Context, orderID, responseID, executorID
 	if err := tx.QueryRow(ctx, `SELECT status FROM responses WHERE id=$1 AND order_id=$2 AND executor_id=$3 AND deleted_at IS NULL FOR UPDATE`, responseID, orderID, executorID).Scan(&current); err != nil {
 		return Response{}, err
 	}
-	if current != "draft" && current != "payment_pending" {
+	if !CanCancel(current) {
 		return Response{}, ErrInvalidStatus
 	}
 	row := tx.QueryRow(ctx, `UPDATE responses SET status='cancelled', updated_at=NOW() WHERE id=$1 RETURNING id, order_id, executor_id, cover_letter, proposed_amount, currency, status, is_paid, paid_at, created_at, updated_at, deleted_at`, responseID)
 	updated, err := scanResponse(row)
 	if err != nil {
 		return Response{}, err
+	}
+	if current == StatusPaymentPending {
+		if _, err := tx.Exec(ctx, `
+			UPDATE payment_transactions
+			SET status='cancelled', failed_at=NOW()
+			WHERE response_id=$1 AND object_type='response_submission' AND status='pending'
+		`, responseID); err != nil {
+			return Response{}, err
+		}
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO response_status_history (response_id, old_status, new_status, changed_by, reason) VALUES ($1,$2,'cancelled',$3,$4)`, responseID, current, executorID, reason); err != nil {
 		return Response{}, err

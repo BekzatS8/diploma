@@ -5,25 +5,25 @@ import "time"
 type CreateOrderRequest struct {
 	Title        string     `json:"title" binding:"required,min=3,max=200"`
 	Description  string     `json:"description" binding:"required,min=10,max=5000"`
-	CategoryID   *int64     `json:"category_id"`
-	CategorySlug *string    `json:"category_slug"`
+	CategoryID   *int64     `json:"category_id" binding:"omitempty,gt=0"`
+	CategorySlug *string    `json:"category_slug" binding:"omitempty,max=100"`
 	BudgetAmount float64    `json:"budget_amount" binding:"required,gt=0"`
-	Currency     *string    `json:"currency"`
+	Currency     *string    `json:"currency" binding:"omitempty,len=3,alpha"`
 	DeadlineAt   *time.Time `json:"deadline_at"`
-	Region       *string    `json:"region"`
-	Promotions   []string   `json:"promotions"`
+	Region       *string    `json:"region" binding:"omitempty,max=100"`
+	Promotions   []string   `json:"promotions" binding:"omitempty,dive,oneof=top promotion_top raise_top pin pinned promotion_pin highlight highlighted promotion_highlight"`
 }
 
 type UpdateOrderRequest struct {
-	Title        *string    `json:"title"`
-	Description  *string    `json:"description"`
-	CategoryID   *int64     `json:"category_id"`
-	CategorySlug *string    `json:"category_slug"`
-	BudgetAmount *float64   `json:"budget_amount"`
-	Currency     *string    `json:"currency"`
+	Title        *string    `json:"title" binding:"omitempty,min=3,max=200"`
+	Description  *string    `json:"description" binding:"omitempty,min=10,max=5000"`
+	CategoryID   *int64     `json:"category_id" binding:"omitempty,gt=0"`
+	CategorySlug *string    `json:"category_slug" binding:"omitempty,max=100"`
+	BudgetAmount *float64   `json:"budget_amount" binding:"omitempty,gt=0"`
+	Currency     *string    `json:"currency" binding:"omitempty,len=3,alpha"`
 	DeadlineAt   *time.Time `json:"deadline_at"`
-	Region       *string    `json:"region"`
-	Promotions   []string   `json:"promotions"`
+	Region       *string    `json:"region" binding:"omitempty,max=100"`
+	Promotions   []string   `json:"promotions" binding:"omitempty,dive,oneof=top promotion_top raise_top pin pinned promotion_pin highlight highlighted promotion_highlight"`
 }
 
 type PublicOrdersQuery struct {
@@ -56,6 +56,21 @@ type SubmitPaymentNextStep struct {
 	Currency      string  `json:"currency"`
 	CheckoutURL   string  `json:"checkout_url"`
 	ProviderRef   string  `json:"provider_ref"`
+}
+
+type PaymentTransactionResponse struct {
+	ID          string    `json:"id"`
+	Provider    string    `json:"provider"`
+	ProviderRef *string   `json:"provider_ref,omitempty"`
+	Amount      float64   `json:"amount"`
+	Currency    string    `json:"currency"`
+	Status      string    `json:"status"`
+	InitiatedAt time.Time `json:"initiated_at"`
+}
+
+type OrderDetailsResponse struct {
+	Order         OrderResponse               `json:"order"`
+	LatestPayment *PaymentTransactionResponse `json:"latest_payment,omitempty"`
 }
 
 type OrderResponse struct {

@@ -3,6 +3,7 @@ package orders
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -46,13 +47,23 @@ func (h *Handler) ListMy(c *gin.Context) {
 		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
 		return
 	}
+	page, message, ok := parsePositiveInt(c.Request.URL.Query(), "page", 1, 0)
+	if !ok {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", message)
+		return
+	}
+	pageSize, message, ok := parsePositiveInt(c.Request.URL.Query(), "page_size", 20, 100)
+	if !ok {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", message)
+		return
+	}
 	query := MyOrdersQuery{
 		Status:   strings.TrimSpace(c.Query("status")),
-		Page:     parseIntDefault(c.Query("page"), 1),
-		PageSize: parseIntDefault(c.Query("page_size"), 20),
+		Page:     page,
+		PageSize: pageSize,
 	}
-	if query.Page < 1 || query.PageSize < 1 || query.PageSize > 100 {
-		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid pagination")
+	if query.Status != "" && !IsKnownStatus(query.Status) {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid status")
 		return
 	}
 	items, total, err := h.service.ListMy(c.Request.Context(), user.UserID, user.PrimaryRole(), query)
@@ -74,16 +85,16 @@ func (h *Handler) GetMyByID(c *gin.Context) {
 		h.handleError(c, err)
 		return
 	}
-	body := gin.H{"order": toOrderResponse(order, true)}
+	body := OrderDetailsResponse{Order: toOrderResponse(order, true)}
 	if payment != nil {
-		body["latest_payment"] = gin.H{
-			"id":           payment.ID,
-			"provider":     payment.Provider,
-			"provider_ref": payment.ProviderTransactionID,
-			"amount":       payment.Amount,
-			"currency":     payment.Currency,
-			"status":       payment.Status,
-			"initiated_at": payment.InitiatedAt,
+		body.LatestPayment = &PaymentTransactionResponse{
+			ID:          payment.ID,
+			Provider:    payment.Provider,
+			ProviderRef: payment.ProviderTransactionID,
+			Amount:      payment.Amount,
+			Currency:    payment.Currency,
+			Status:      payment.Status,
+			InitiatedAt: payment.InitiatedAt,
 		}
 	}
 	response.JSON(c, http.StatusOK, body)
@@ -118,7 +129,7 @@ func (h *Handler) DeleteMyByID(c *gin.Context) {
 		h.handleError(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"status": "deleted"})
+	response.JSON(c, http.StatusOK, response.StatusResponse{Status: "deleted"})
 }
 
 func (h *Handler) Submit(c *gin.Context) {
@@ -161,44 +172,9 @@ func (h *Handler) Cancel(c *gin.Context) {
 }
 
 func (h *Handler) ListPublic(c *gin.Context) {
-	var budgetMin, budgetMax *float64
-	if v := strings.TrimSpace(c.Query("budget_min")); v != "" {
-		parsed, err := strconv.ParseFloat(v, 64)
-		if err != nil {
-			response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid budget_min")
-			return
-		}
-		budgetMin = &parsed
-	}
-	if v := strings.TrimSpace(c.Query("budget_max")); v != "" {
-		parsed, err := strconv.ParseFloat(v, 64)
-		if err != nil {
-			response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid budget_max")
-			return
-		}
-		budgetMax = &parsed
-	}
-	var deadlineBefore *time.Time
-	if v := strings.TrimSpace(c.Query("deadline_before")); v != "" {
-		parsed, err := time.Parse(time.RFC3339, v)
-		if err != nil {
-			response.JSONError(c, http.StatusBadRequest, "bad_request", "deadline_before must be RFC3339")
-			return
-		}
-		deadlineBefore = &parsed
-	}
-	query := PublicOrdersQuery{
-		CategorySlug:   strings.TrimSpace(c.Query("category")),
-		BudgetMin:      budgetMin,
-		BudgetMax:      budgetMax,
-		DeadlineBefore: deadlineBefore,
-		Q:              strings.TrimSpace(c.Query("q")),
-		Region:         strings.TrimSpace(c.Query("region")),
-		Page:           parseIntDefault(c.Query("page"), 1),
-		PageSize:       parseIntDefault(c.Query("page_size"), 20),
-	}
-	if query.Page < 1 || query.PageSize < 1 || query.PageSize > 100 {
-		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid pagination")
+	query, message, ok := parsePublicOrdersQuery(c.Request.URL.Query())
+	if !ok {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", message)
 		return
 	}
 	items, total, err := h.service.ListPublic(c.Request.Context(), query)
@@ -285,14 +261,82 @@ func toOrderResponses(items []Order, includeClient bool) []OrderResponse {
 	return out
 }
 
-func parseIntDefault(v string, def int) int {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return def
+func parsePublicOrdersQuery(values url.Values) (PublicOrdersQuery, string, bool) {
+	budgetMin, message, ok := parseOptionalNonNegativeFloat(values, "budget_min")
+	if !ok {
+		return PublicOrdersQuery{}, message, false
 	}
-	p, err := strconv.Atoi(v)
-	if err != nil {
-		return def
+	budgetMax, message, ok := parseOptionalNonNegativeFloat(values, "budget_max")
+	if !ok {
+		return PublicOrdersQuery{}, message, false
 	}
-	return p
+	if budgetMin != nil && budgetMax != nil && *budgetMin > *budgetMax {
+		return PublicOrdersQuery{}, "budget_min must be less than or equal to budget_max", false
+	}
+
+	var deadlineBefore *time.Time
+	if v := strings.TrimSpace(values.Get("deadline_before")); v != "" {
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return PublicOrdersQuery{}, "deadline_before must be RFC3339", false
+		}
+		deadlineBefore = &parsed
+	}
+
+	page, message, ok := parsePositiveInt(values, "page", 1, 0)
+	if !ok {
+		return PublicOrdersQuery{}, message, false
+	}
+	pageSize, message, ok := parsePositiveInt(values, "page_size", 20, 100)
+	if !ok {
+		return PublicOrdersQuery{}, message, false
+	}
+
+	category := strings.ToLower(strings.TrimSpace(values.Get("category")))
+	region := strings.TrimSpace(values.Get("region"))
+	q := strings.TrimSpace(values.Get("q"))
+	if len(category) > 100 {
+		return PublicOrdersQuery{}, "category is too long", false
+	}
+	if len(region) > 100 {
+		return PublicOrdersQuery{}, "region is too long", false
+	}
+	if len(q) > 200 {
+		return PublicOrdersQuery{}, "q is too long", false
+	}
+
+	return PublicOrdersQuery{
+		CategorySlug:   category,
+		BudgetMin:      budgetMin,
+		BudgetMax:      budgetMax,
+		DeadlineBefore: deadlineBefore,
+		Region:         region,
+		Q:              q,
+		Page:           page,
+		PageSize:       pageSize,
+	}, "", true
+}
+
+func parseOptionalNonNegativeFloat(values url.Values, name string) (*float64, string, bool) {
+	raw := strings.TrimSpace(values.Get(name))
+	if raw == "" {
+		return nil, "", true
+	}
+	parsed, err := strconv.ParseFloat(raw, 64)
+	if err != nil || parsed < 0 {
+		return nil, "Invalid " + name, false
+	}
+	return &parsed, "", true
+}
+
+func parsePositiveInt(values url.Values, name string, def, max int) (int, string, bool) {
+	raw := strings.TrimSpace(values.Get(name))
+	if raw == "" {
+		return def, "", true
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 1 || (max > 0 && parsed > max) {
+		return 0, "Invalid " + name, false
+	}
+	return parsed, "", true
 }

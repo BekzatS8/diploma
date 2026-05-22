@@ -41,7 +41,11 @@ func (h *Handler) ListOrderMy(c *gin.Context) {
 		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
 		return
 	}
-	q := parseListQuery(c)
+	q, message, ok := parseListQuery(c)
+	if !ok {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", message)
+		return
+	}
 	items, total, err := h.service.ListOrderMy(c.Request.Context(), c.Param("id"), user.UserID, user.PrimaryRole(), q)
 	if err != nil {
 		h.handleErr(c, err)
@@ -93,7 +97,7 @@ func (h *Handler) DeleteOrderMyByID(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"status": "deleted"})
+	response.JSON(c, http.StatusOK, response.StatusResponse{Status: "deleted"})
 }
 
 func (h *Handler) Submit(c *gin.Context) {
@@ -130,7 +134,11 @@ func (h *Handler) ListMy(c *gin.Context) {
 		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
 		return
 	}
-	q := parseListQuery(c)
+	q, message, ok := parseListQuery(c)
+	if !ok {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", message)
+		return
+	}
 	items, total, err := h.service.ListMy(c.Request.Context(), user.UserID, user.PrimaryRole(), q)
 	if err != nil {
 		h.handleErr(c, err)
@@ -160,7 +168,11 @@ func (h *Handler) ListClientOrder(c *gin.Context) {
 		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
 		return
 	}
-	q := parseListQuery(c)
+	q, message, ok := parseListQuery(c)
+	if !ok {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", message)
+		return
+	}
 	items, total, err := h.service.ListClientOrder(c.Request.Context(), c.Param("id"), user.UserID, user.PrimaryRole(), q)
 	if err != nil {
 		h.handleErr(c, err)
@@ -183,20 +195,28 @@ func (h *Handler) GetClientOrderByID(c *gin.Context) {
 	response.JSON(c, http.StatusOK, toView(item, true))
 }
 
-func parseListQuery(c *gin.Context) ListQuery {
+func parseListQuery(c *gin.Context) (ListQuery, string, bool) {
 	page := 1
 	if v := strings.TrimSpace(c.Query("page")); v != "" {
-		if p, err := strconv.Atoi(v); err == nil && p > 0 {
-			page = p
+		p, err := strconv.Atoi(v)
+		if err != nil || p < 1 {
+			return ListQuery{}, "Invalid page", false
 		}
+		page = p
 	}
 	size := 20
 	if v := strings.TrimSpace(c.Query("page_size")); v != "" {
-		if p, err := strconv.Atoi(v); err == nil && p > 0 && p <= 100 {
-			size = p
+		p, err := strconv.Atoi(v)
+		if err != nil || p < 1 || p > 100 {
+			return ListQuery{}, "Invalid page_size", false
 		}
+		size = p
 	}
-	return ListQuery{Status: strings.TrimSpace(c.Query("status")), Page: page, PageSize: size}
+	status := strings.TrimSpace(c.Query("status"))
+	if status != "" && !IsKnownStatus(status) {
+		return ListQuery{}, "Invalid status", false
+	}
+	return ListQuery{Status: status, Page: page, PageSize: size}, "", true
 }
 
 func toView(r Response, includeExecutor bool) ResponseView {

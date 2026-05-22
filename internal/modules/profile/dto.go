@@ -1,29 +1,29 @@
 package profile
 
 type UpdateProfileRequest struct {
-	ProfileName     *string  `json:"profile_name"`
-	Phone           *string  `json:"phone"`
-	Bio             *string  `json:"bio"`
-	Expertise       *string  `json:"expertise"`
-	CompanyName     *string  `json:"company_name"`
-	ClientType      *string  `json:"client_type"`
-	TaxNumber       *string  `json:"tax_number"`
-	ContactName     *string  `json:"contact_name"`
-	ContactPosition *string  `json:"contact_position"`
-	Address         *string  `json:"address"`
-	About           *string  `json:"about"`
-	Website         *string  `json:"website"`
-	YearsExperience *int     `json:"years_experience"`
-	FirstName       *string  `json:"first_name"`
-	LastName        *string  `json:"last_name"`
-	MiddleName      *string  `json:"middle_name"`
-	IIN             *string  `json:"iin"`
-	City            *string  `json:"city"`
-	ExperienceLevel *string  `json:"experience_level"`
-	Specializations []string `json:"specializations"`
-	Education       *string  `json:"education"`
-	WorkFormat      *string  `json:"work_format"`
-	HourlyRate      *float64 `json:"hourly_rate"`
+	ProfileName     *string  `json:"profile_name" binding:"omitempty,min=1,max=200"`
+	Phone           *string  `json:"phone" binding:"omitempty,max=32"`
+	Bio             *string  `json:"bio" binding:"omitempty,max=5000"`
+	Expertise       *string  `json:"expertise" binding:"omitempty,max=500"`
+	CompanyName     *string  `json:"company_name" binding:"omitempty,max=200"`
+	ClientType      *string  `json:"client_type" binding:"omitempty,oneof=too ip representative"`
+	TaxNumber       *string  `json:"tax_number" binding:"omitempty,max=64"`
+	ContactName     *string  `json:"contact_name" binding:"omitempty,max=200"`
+	ContactPosition *string  `json:"contact_position" binding:"omitempty,max=200"`
+	Address         *string  `json:"address" binding:"omitempty,max=500"`
+	About           *string  `json:"about" binding:"omitempty,max=5000"`
+	Website         *string  `json:"website" binding:"omitempty,max=2048"`
+	YearsExperience *int     `json:"years_experience" binding:"omitempty,gte=0,lte=80"`
+	FirstName       *string  `json:"first_name" binding:"omitempty,max=100"`
+	LastName        *string  `json:"last_name" binding:"omitempty,max=100"`
+	MiddleName      *string  `json:"middle_name" binding:"omitempty,max=100"`
+	IIN             *string  `json:"iin" binding:"omitempty,len=12,numeric"`
+	City            *string  `json:"city" binding:"omitempty,max=100"`
+	ExperienceLevel *string  `json:"experience_level" binding:"omitempty,max=100"`
+	Specializations []string `json:"specializations" binding:"omitempty,dive,min=1,max=100"`
+	Education       *string  `json:"education" binding:"omitempty,max=1000"`
+	WorkFormat      *string  `json:"work_format" binding:"omitempty,max=100"`
+	HourlyRate      *float64 `json:"hourly_rate" binding:"omitempty,gte=0,lte=10000000"`
 }
 
 type SetAvatarRequest struct {

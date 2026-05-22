@@ -58,7 +58,7 @@ func (h *Handler) AdminCredit(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, gin.H{"wallet": wallet})
+	response.JSON(c, http.StatusOK, WalletCreditResponse{Wallet: wallet})
 }
 
 func (h *Handler) handleErr(c *gin.Context, err error) {
