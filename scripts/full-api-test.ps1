@@ -577,6 +577,16 @@ function Run-FullApiTestsForBaseUrl {
             Invoke-Api -BaseUrl $baseUrl -Method "PATCH" -Path "/api/v1/coach/courses/$courseId/materials/$materialId" -Token $coach.AccessToken -Body @{ title = "Text Material Updated"; content = "Updated content." } -Expected @(200) -Name "coach/courses/{id}/materials/{mId} PATCH" | Out-Null
             Invoke-Api -BaseUrl $baseUrl -Method "DELETE" -Path "/api/v1/coach/courses/$courseId/materials/$materialId" -Token $coach.AccessToken -Expected @(200) -Name "coach/courses/{id}/materials/{mId} DELETE" | Out-Null
         }
+        $progressMaterialId = ""
+        $progressMaterialCreate = Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/coach/courses/$courseId/materials" -Token $coach.AccessToken -Body @{
+            title    = "Progress Material"
+            type     = "text"
+            content  = "Full API progress material content."
+            position = 2
+        } -Expected @(201) -Name "coach/courses/{id}/materials POST progress"
+        if ($progressMaterialCreate.Ok -and (Require-Value $progressMaterialCreate.Json.id "progress material id")) {
+            $progressMaterialId = $progressMaterialCreate.Json.id
+        }
 
         Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/coach/courses/$courseId/publish" -Token $coach.AccessToken -Expected @(200) -Name "coach/courses/{id}/publish POST" | Out-Null
         Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/courses" -Token $executor.AccessToken -Expected @(200) -Name "courses GET list" | Out-Null
@@ -594,6 +604,9 @@ function Run-FullApiTestsForBaseUrl {
             $assignId = $assignCreate.Json.id
             Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/my/course-assignments" -Token $executor.AccessToken -Expected @(200) -Name "my/course-assignments GET" | Out-Null
             Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/my/course-assignments/$assignId" -Token $executor.AccessToken -Expected @(200) -Name "my/course-assignments/{id} GET" | Out-Null
+            if (-not [string]::IsNullOrWhiteSpace($progressMaterialId)) {
+                Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/my/course-assignments/$assignId/materials/$progressMaterialId/complete" -Token $executor.AccessToken -Expected @(200) -Name "my/course-assignments/{id}/materials/{mId}/complete POST" | Out-Null
+            }
             Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/my/course-assignments/$assignId/mark-completed" -Token $executor.AccessToken -Expected @(200) -Name "my/course-assignments/{id}/mark-completed POST" | Out-Null
             Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/reviews" -Token $executor.AccessToken -Body @{ target_type = "course"; target_id = $courseId; rating = 5; comment = "Full API test course review." } -Expected @(201) -Name "reviews POST course after completed assignment" | Out-Null
         }
@@ -802,6 +815,7 @@ function Run-FullApiTestsForBaseUrl {
 
     Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/my/sanctions" -Token $executor.AccessToken -Expected @(200) -Name "my/sanctions GET list" | Out-Null
     $adminSancs = Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/admin/sanctions" -Token $admin.AccessToken -Expected @(200) -Name "admin/sanctions GET list"
+    Invoke-Api -BaseUrl $baseUrl -Method "POST" -Path "/api/v1/admin/sanctions/expire" -Token $admin.AccessToken -Expected @(200) -Name "admin/sanctions/expire POST" | Out-Null
     $sancId = Get-FirstItemId $adminSancs.Json
     if (-not [string]::IsNullOrWhiteSpace($sancId)) {
         Invoke-Api -BaseUrl $baseUrl -Method "GET" -Path "/api/v1/admin/sanctions/$sancId" -Token $admin.AccessToken -Expected @(200) -Name "admin/sanctions/{id} GET" | Out-Null

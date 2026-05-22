@@ -42,7 +42,7 @@ func (r *Repository) Create(ctx context.Context, p CreateParams) (Notification, 
 	}
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO notifications(user_id, type, channel, status, payload, sent_at)
-		VALUES($1,$2,$3,$4,$5::jsonb, CASE WHEN $4 IN ('sent','read') THEN NOW() ELSE NULL END)
+		VALUES($1,$2,$3::notification_channel,$4::notification_status,$5::jsonb, CASE WHEN $4::text IN ('sent','read') THEN NOW() ELSE NULL END)
 		RETURNING id, user_id, type, channel, status, payload, created_at, sent_at, read_at
 	`, p.UserID, p.Type, p.Channel, p.Status, body)
 	var n Notification

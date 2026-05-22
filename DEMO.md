@@ -171,13 +171,25 @@ curl -s http://localhost:8080/api/v1/my/course-assignments \
   -H "Authorization: Bearer $EXECUTOR_TOKEN"
 ```
 
-### 4.3 Mark assignment completed
+### 4.3 Mark material completed
+```bash
+curl -s -X POST http://localhost:8080/api/v1/my/course-assignments/$ASSIGNMENT_ID/materials/$MATERIAL_ID/complete \
+  -H "Authorization: Bearer $EXECUTOR_TOKEN"
+```
+
+### 4.4 Mark assignment completed
 ```bash
 curl -s -X POST http://localhost:8080/api/v1/my/course-assignments/$ASSIGNMENT_ID/mark-completed \
   -H "Authorization: Bearer $EXECUTOR_TOKEN"
 ```
 
-### 4.4 Notifications read flow
+### 4.5 Expire due sanctions (admin)
+```bash
+curl -s -X POST http://localhost:8080/api/v1/admin/sanctions/expire \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+### 4.6 Notifications read flow
 ```bash
 curl -s http://localhost:8080/api/v1/my/notifications?unread_only=true \
   -H "Authorization: Bearer $EXECUTOR_TOKEN"

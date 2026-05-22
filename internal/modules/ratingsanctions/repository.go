@@ -40,7 +40,12 @@ type Sanction struct {
 	Severity   int        `json:"severity"`
 	StartedAt  time.Time  `json:"started_at"`
 	EndsAt     *time.Time `json:"ends_at,omitempty"`
+	ExpiredAt  *time.Time `json:"expired_at,omitempty"`
 	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
+}
+
+type ExpireResult struct {
+	ExpiredCount int64 `json:"expired_count"`
 }
 
 type RecalculateResult struct {
@@ -81,6 +86,31 @@ func (r *Repository) GetRating(ctx context.Context, executorID string) (RatingIn
 	return info, nil
 }
 
+func expireDueTx(ctx context.Context, tx pgx.Tx, actorID, source, executorID string) (int64, error) {
+	var executorArg any
+	if executorID != "" {
+		executorArg = executorID
+	}
+	res, err := tx.Exec(ctx, `
+		UPDATE sanctions
+		SET status='expired',
+			expired_at=COALESCE(expired_at, NOW()),
+			metadata = metadata || jsonb_build_object(
+				'expired_by', NULLIF($1::text,''),
+				'expired_source', $2::text,
+				'expired_at', NOW()
+			)
+		WHERE status='active'
+		  AND ends_at IS NOT NULL
+		  AND ends_at <= NOW()
+		  AND ($3::uuid IS NULL OR executor_id=$3::uuid)
+	`, actorID, source, executorArg)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected(), nil
+}
+
 func (r *Repository) RecalculateAndApply(ctx context.Context, tx pgx.Tx, executorID string) (RecalculateResult, error) {
 	result := RecalculateResult{}
 	var total int
@@ -98,6 +128,10 @@ func (r *Repository) RecalculateAndApply(ctx context.Context, tx pgx.Tx, executo
 		return result, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO executor_rating_snapshots(executor_id, rating_avg, rating_count, snapshot_reason) VALUES($1,$2,$3,$4)`, executorID, avgRecent, recentCount, "review_created"); err != nil {
+		return result, err
+	}
+
+	if _, err := expireDueTx(ctx, tx, "", "rating_recalculate", executorID); err != nil {
 		return result, err
 	}
 
@@ -187,7 +221,7 @@ func (r *Repository) RecalculateAndApply(ctx context.Context, tx pgx.Tx, executo
 }
 
 func (r *Repository) ListMy(ctx context.Context, executorID string) ([]Sanction, error) {
-	rows, err := r.db.Query(ctx, `SELECT id, executor_id, status, reason, severity, started_at, ends_at, resolved_at FROM sanctions WHERE executor_id=$1 ORDER BY started_at DESC`, executorID)
+	rows, err := r.db.Query(ctx, `SELECT id, executor_id, status, reason, severity, started_at, ends_at, expired_at, resolved_at FROM sanctions WHERE executor_id=$1 ORDER BY started_at DESC`, executorID)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +229,7 @@ func (r *Repository) ListMy(ctx context.Context, executorID string) ([]Sanction,
 	out := make([]Sanction, 0)
 	for rows.Next() {
 		var s Sanction
-		if err := rows.Scan(&s.ID, &s.ExecutorID, &s.Status, &s.Reason, &s.Severity, &s.StartedAt, &s.EndsAt, &s.ResolvedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.ExecutorID, &s.Status, &s.Reason, &s.Severity, &s.StartedAt, &s.EndsAt, &s.ExpiredAt, &s.ResolvedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -208,7 +242,7 @@ func (r *Repository) ListAdmin(ctx context.Context, limit, offset int) ([]Sancti
 	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM sanctions`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.db.Query(ctx, `SELECT id, executor_id, status, reason, severity, started_at, ends_at, resolved_at FROM sanctions ORDER BY started_at DESC LIMIT $1 OFFSET $2`, limit, offset)
+	rows, err := r.db.Query(ctx, `SELECT id, executor_id, status, reason, severity, started_at, ends_at, expired_at, resolved_at FROM sanctions ORDER BY started_at DESC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -216,7 +250,7 @@ func (r *Repository) ListAdmin(ctx context.Context, limit, offset int) ([]Sancti
 	out := make([]Sanction, 0)
 	for rows.Next() {
 		var s Sanction
-		if err := rows.Scan(&s.ID, &s.ExecutorID, &s.Status, &s.Reason, &s.Severity, &s.StartedAt, &s.EndsAt, &s.ResolvedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.ExecutorID, &s.Status, &s.Reason, &s.Severity, &s.StartedAt, &s.EndsAt, &s.ExpiredAt, &s.ResolvedAt); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, s)
@@ -225,13 +259,58 @@ func (r *Repository) ListAdmin(ctx context.Context, limit, offset int) ([]Sancti
 }
 
 func (r *Repository) GetSanction(ctx context.Context, id string) (Sanction, error) {
-	row := r.db.QueryRow(ctx, `SELECT id, executor_id, status, reason, severity, started_at, ends_at, resolved_at FROM sanctions WHERE id=$1`, id)
+	row := r.db.QueryRow(ctx, `SELECT id, executor_id, status, reason, severity, started_at, ends_at, expired_at, resolved_at FROM sanctions WHERE id=$1`, id)
 	var s Sanction
-	err := row.Scan(&s.ID, &s.ExecutorID, &s.Status, &s.Reason, &s.Severity, &s.StartedAt, &s.EndsAt, &s.ResolvedAt)
+	err := row.Scan(&s.ID, &s.ExecutorID, &s.Status, &s.Reason, &s.Severity, &s.StartedAt, &s.EndsAt, &s.ExpiredAt, &s.ResolvedAt)
 	return s, err
 }
 
 func (r *Repository) Lift(ctx context.Context, id, actorID string) error {
-	_, err := r.db.Exec(ctx, `UPDATE sanctions SET status='resolved', resolved_at=NOW(), metadata = metadata || jsonb_build_object('lifted_by',$2) WHERE id=$1 AND status='active'`, id, actorID)
-	return err
+	res, err := r.db.Exec(ctx, `
+		UPDATE sanctions
+		SET status='resolved',
+			resolved_at=NOW(),
+			metadata = metadata || jsonb_build_object('resolved_by',$2,'resolve_source','admin_lift')
+		WHERE id=$1 AND status IN ('active','expired')
+	`, id, actorID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (r *Repository) ResolveExpired(ctx context.Context, id, actorID string) error {
+	res, err := r.db.Exec(ctx, `
+		UPDATE sanctions
+		SET status='resolved',
+			resolved_at=NOW(),
+			metadata = metadata || jsonb_build_object('resolved_by',$2,'resolve_source','admin_resolve')
+		WHERE id=$1 AND status='expired'
+	`, id, actorID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (r *Repository) ExpireDue(ctx context.Context, actorID, source string) (ExpireResult, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ExpireResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	count, err := expireDueTx(ctx, tx, actorID, source, "")
+	if err != nil {
+		return ExpireResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ExpireResult{}, err
+	}
+	return ExpireResult{ExpiredCount: count}, nil
 }

@@ -349,14 +349,35 @@ func (s *Service) MarkCompleted(ctx context.Context, id, userID, role string) (C
 	if role != "executor" {
 		return CourseAssignment{}, ErrForbidden
 	}
-	item, err := s.repo.MarkAssignmentCompleted(ctx, id, userID)
+	item, completedNow, err := s.repo.MarkAssignmentCompleted(ctx, id, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CourseAssignment{}, ErrNotFound
 		}
 		return CourseAssignment{}, err
 	}
-	if s.notifier != nil && item.AssignedBy != nil && *item.AssignedBy != "" {
+	if completedNow && s.notifier != nil && item.AssignedBy != nil && *item.AssignedBy != "" {
+		_, _ = s.notifier.EmitInApp(ctx, *item.AssignedBy, notifications.TypeCourseCompleted, map[string]any{
+			"course_id":            item.CourseID,
+			"course_assignment_id": item.ID,
+			"executor_id":          item.ExecutorID,
+		})
+	}
+	return item, nil
+}
+
+func (s *Service) MarkMaterialCompleted(ctx context.Context, assignmentID, materialID, userID, role string) (CourseAssignment, error) {
+	if role != "executor" {
+		return CourseAssignment{}, ErrForbidden
+	}
+	item, completedNow, err := s.repo.MarkMaterialCompleted(ctx, assignmentID, materialID, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CourseAssignment{}, ErrNotFound
+		}
+		return CourseAssignment{}, err
+	}
+	if completedNow && s.notifier != nil && item.AssignedBy != nil && *item.AssignedBy != "" {
 		_, _ = s.notifier.EmitInApp(ctx, *item.AssignedBy, notifications.TypeCourseCompleted, map[string]any{
 			"course_id":            item.CourseID,
 			"course_assignment_id": item.ID,

@@ -276,6 +276,20 @@ func (h *Handler) MarkCompleted(c *gin.Context) {
 	response.JSON(c, http.StatusOK, item)
 }
 
+func (h *Handler) MarkMaterialCompleted(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	item, err := h.service.MarkMaterialCompleted(c.Request.Context(), c.Param("id"), c.Param("materialId"), user.UserID, user.PrimaryRole())
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, item)
+}
+
 func (h *Handler) handleErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):

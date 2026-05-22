@@ -28,30 +28,44 @@ type CourseMaterial struct {
 }
 
 type CourseAssignment struct {
-	ID          string     `json:"id"`
-	CourseID    string     `json:"course_id"`
-	ExecutorID  string     `json:"executor_id"`
-	SanctionID  *string    `json:"sanction_id,omitempty"`
-	AssignedBy  *string    `json:"assigned_by,omitempty"`
-	Reason      *string    `json:"reason,omitempty"`
-	Source      string     `json:"source"`
-	Status      string     `json:"status"`
-	AssignedAt  time.Time  `json:"assigned_at"`
-	DueAt       *time.Time `json:"due_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	Course      *Course    `json:"course,omitempty"`
+	ID          string          `json:"id"`
+	CourseID    string          `json:"course_id"`
+	ExecutorID  string          `json:"executor_id"`
+	SanctionID  *string         `json:"sanction_id,omitempty"`
+	AssignedBy  *string         `json:"assigned_by,omitempty"`
+	Reason      *string         `json:"reason,omitempty"`
+	Source      string          `json:"source"`
+	Status      string          `json:"status"`
+	AssignedAt  time.Time       `json:"assigned_at"`
+	DueAt       *time.Time      `json:"due_at,omitempty"`
+	CompletedAt *time.Time      `json:"completed_at,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	Course      *Course         `json:"course,omitempty"`
+	Progress    *CourseProgress `json:"progress,omitempty"`
 }
 
 type CourseProgress struct {
-	ID              string     `json:"id"`
-	AssignmentID    string     `json:"assignment_id"`
-	ExecutorID      string     `json:"executor_id"`
-	ProgressPercent int        `json:"progress_percent"`
-	Status          string     `json:"status"`
-	LastActivityAt  *time.Time `json:"last_activity_at,omitempty"`
-	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID                   string     `json:"id,omitempty"`
+	AssignmentID         string     `json:"assignment_id"`
+	ExecutorID           string     `json:"executor_id"`
+	ProgressPercent      int        `json:"progress_percent"`
+	Status               string     `json:"status"`
+	CompletedMaterials   int        `json:"completed_materials"`
+	TotalMaterials       int        `json:"total_materials"`
+	CompletedMaterialIDs []string   `json:"completed_material_ids,omitempty"`
+	LastActivityAt       *time.Time `json:"last_activity_at,omitempty"`
+	CompletedAt          *time.Time `json:"completed_at,omitempty"`
+	CreatedAt            *time.Time `json:"created_at,omitempty"`
+	UpdatedAt            *time.Time `json:"updated_at,omitempty"`
+}
+
+type CourseMaterialProgress struct {
+	ID           string    `json:"id"`
+	AssignmentID string    `json:"assignment_id"`
+	MaterialID   string    `json:"material_id"`
+	ExecutorID   string    `json:"executor_id"`
+	CompletedAt  time.Time `json:"completed_at"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }

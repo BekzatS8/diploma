@@ -176,15 +176,25 @@ Backend foundation + auth/profile + orders layer for BuhPro MVP.
   - executor:
     - `GET /api/v1/my/course-assignments`
     - `GET /api/v1/my/course-assignments/:id`
+    - `POST /api/v1/my/course-assignments/:id/materials/:materialId/complete`
     - `POST /api/v1/my/course-assignments/:id/mark-completed`
+  - progress:
+    - material completion is stored per `(assignment_id, material_id)`
+    - assignment `progress.progress_percent` is updated after each material completion
+    - assignment status becomes `completed` automatically at 100%
+    - `mark-completed` remains as a backward-compatible shortcut that completes all current materials
 - Assignment source values:
   - `manual_admin`
   - `sanction_low_rating_first`
   - `sanction_low_rating_repeat`
 - Low-rating sanctions integration:
-  - sanctions still created as before
+  - recent average `< 3.0` creates a low-rating sanction
+  - first sanction lasts 7 days; repeat sanction lasts 30 days
+  - lifecycle is explicit: `active -> expired -> resolved`
+  - due active sanctions can be expired with `POST /api/v1/admin/sanctions/expire` or `go run ./cmd/expire-sanctions`
+  - admin can resolve expired sanctions with `POST /api/v1/admin/sanctions/:id/resolve` (`/lift` remains as a compatibility manual lift endpoint)
   - metadata stores machine-readable follow-up intent
-  - optional auto-assignment when enabled by env flags (see below)
+  - optional course auto-assignment only runs when `AUTO_ASSIGN_COURSE_ON_LOW_RATING=true` and `DEFAULT_LOW_RATING_COURSE_ID` is set
   - assignment is created only for published default course and deduplicated by active `(course_id, executor_id)` assignment.
 
 ## Notifications foundation (MVP)

@@ -208,7 +208,9 @@ func New(deps Deps) *gin.Engine {
 		adminSanctions := v1.Group("/admin/sanctions")
 		adminSanctions.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
 		adminSanctions.GET("", deps.RatingHandler.AdminSanctions)
+		adminSanctions.POST("/expire", deps.RatingHandler.ExpireDue)
 		adminSanctions.GET("/:id", deps.RatingHandler.AdminSanctionByID)
+		adminSanctions.POST("/:id/resolve", deps.RatingHandler.Resolve)
 		adminSanctions.POST("/:id/lift", deps.RatingHandler.Lift)
 
 		coachCourses := v1.Group("/coach/courses")
@@ -237,6 +239,7 @@ func New(deps Deps) *gin.Engine {
 		myCourseAssignments.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor"))
 		myCourseAssignments.GET("", deps.CoursesHandler.ListMyAssignments)
 		myCourseAssignments.GET("/:id", deps.CoursesHandler.GetMyAssignment)
+		myCourseAssignments.POST("/:id/materials/:materialId/complete", deps.CoursesHandler.MarkMaterialCompleted)
 		myCourseAssignments.POST("/:id/mark-completed", deps.CoursesHandler.MarkCompleted)
 
 		myNotifications := v1.Group("/my/notifications")

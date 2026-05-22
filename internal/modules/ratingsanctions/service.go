@@ -69,5 +69,31 @@ func (s *Service) Lift(ctx context.Context, role, id, actorID string) error {
 	if role != "admin" {
 		return ErrForbidden
 	}
-	return s.repo.Lift(ctx, id, actorID)
+	if err := s.repo.Lift(ctx, id, actorID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Service) ResolveExpired(ctx context.Context, role, id, actorID string) error {
+	if role != "admin" {
+		return ErrForbidden
+	}
+	if err := s.repo.ResolveExpired(ctx, id, actorID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Service) ExpireDue(ctx context.Context, role, actorID string) (ExpireResult, error) {
+	if role != "admin" {
+		return ExpireResult{}, ErrForbidden
+	}
+	return s.repo.ExpireDue(ctx, actorID, "admin_endpoint")
 }

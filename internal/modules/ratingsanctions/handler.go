@@ -81,6 +81,33 @@ func (h *Handler) Lift(c *gin.Context) {
 	response.JSON(c, http.StatusOK, gin.H{"status": "lifted"})
 }
 
+func (h *Handler) Resolve(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	if err := h.service.ResolveExpired(c.Request.Context(), user.PrimaryRole(), c.Param("id"), user.UserID); err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, gin.H{"status": "resolved"})
+}
+
+func (h *Handler) ExpireDue(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	result, err := h.service.ExpireDue(c.Request.Context(), user.PrimaryRole(), user.UserID)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, result)
+}
+
 func (h *Handler) handleErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):

@@ -2,8 +2,10 @@ package courses
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -217,15 +219,33 @@ func (r *Repository) ListMaterialsByCourse(ctx context.Context, courseID string)
 }
 
 func (r *Repository) CreateAssignment(ctx context.Context, p CreateAssignmentParams) (CourseAssignment, error) {
-	row := r.db.QueryRow(ctx, `
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return CourseAssignment{}, err
+	}
+	defer tx.Rollback(ctx)
+	row := tx.QueryRow(ctx, `
 		INSERT INTO course_assignments(course_id, executor_id, sanction_id, assigned_by, reason, source, status, due_at)
 		VALUES($1,$2,$3,$4,$5,$6,'assigned',$7)
 		ON CONFLICT (course_id, executor_id) WHERE status IN ('assigned','in_progress') DO NOTHING
 		RETURNING id, course_id, executor_id, sanction_id, assigned_by, reason, source, status, assigned_at, due_at, completed_at, created_at, updated_at
 	`, p.CourseID, p.ExecutorID, p.SanctionID, p.AssignedBy, p.Reason, p.Source, p.DueAt)
 	var a CourseAssignment
-	err := row.Scan(&a.ID, &a.CourseID, &a.ExecutorID, &a.SanctionID, &a.AssignedBy, &a.Reason, &a.Source, &a.Status, &a.AssignedAt, &a.DueAt, &a.CompletedAt, &a.CreatedAt, &a.UpdatedAt)
-	return a, err
+	if err := row.Scan(&a.ID, &a.CourseID, &a.ExecutorID, &a.SanctionID, &a.AssignedBy, &a.Reason, &a.Source, &a.Status, &a.AssignedAt, &a.DueAt, &a.CompletedAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		return CourseAssignment{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO course_progress(assignment_id, executor_id, progress_percent, status)
+		VALUES($1,$2,0,'assigned')
+		ON CONFLICT (assignment_id) DO NOTHING
+	`, a.ID, a.ExecutorID); err != nil {
+		return CourseAssignment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CourseAssignment{}, err
+	}
+	a.Progress = &CourseProgress{AssignmentID: a.ID, ExecutorID: a.ExecutorID, ProgressPercent: 0, Status: "assigned"}
+	return a, nil
 }
 
 func (r *Repository) IsCoursePublished(ctx context.Context, courseID string) (bool, error) {
@@ -277,7 +297,13 @@ func (r *Repository) ListAssignmentsAdmin(ctx context.Context, q ListAssignments
 	}
 	defer rows.Close()
 	items, err := scanAssignmentsWithCourse(rows)
-	return items, total, err
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := r.attachProgress(ctx, items); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
 }
 
 func (r *Repository) ListAssignmentsMy(ctx context.Context, executorID string, onlyPublished bool, page, size int) ([]CourseAssignment, int64, error) {
@@ -303,7 +329,13 @@ func (r *Repository) ListAssignmentsMy(ctx context.Context, executorID string, o
 	}
 	defer rows.Close()
 	items, err := scanAssignmentsWithCourse(rows)
-	return items, total, err
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := r.attachProgress(ctx, items); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
 }
 
 func (r *Repository) GetMyAssignmentByID(ctx context.Context, id, executorID string) (CourseAssignment, error) {
@@ -314,42 +346,317 @@ func (r *Repository) GetMyAssignmentByID(ctx context.Context, id, executorID str
 		JOIN courses c ON c.id = ca.course_id
 		WHERE ca.id=$1 AND ca.executor_id=$2 AND c.status='published' AND c.deleted_at IS NULL
 	`, id, executorID)
-	return scanAssignmentWithCourse(row)
-}
-
-func (r *Repository) MarkAssignmentCompleted(ctx context.Context, id, executorID string) (CourseAssignment, error) {
-	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	item, err := scanAssignmentWithCourse(row)
 	if err != nil {
 		return CourseAssignment{}, err
 	}
-	defer tx.Rollback(ctx)
-	row := tx.QueryRow(ctx, `
-		UPDATE course_assignments
-		SET status='completed', completed_at=COALESCE(completed_at, NOW()), updated_at=NOW()
-		WHERE id=$1 AND executor_id=$2 AND status IN ('assigned','in_progress')
-		RETURNING id, course_id, executor_id, sanction_id, assigned_by, reason, source, status, assigned_at, due_at, completed_at, created_at, updated_at
-	`, id, executorID)
-	var a CourseAssignment
-	if err := row.Scan(&a.ID, &a.CourseID, &a.ExecutorID, &a.SanctionID, &a.AssignedBy, &a.Reason, &a.Source, &a.Status, &a.AssignedAt, &a.DueAt, &a.CompletedAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
+	items := []CourseAssignment{item}
+	if err := r.attachProgress(ctx, items); err != nil {
 		return CourseAssignment{}, err
+	}
+	return items[0], nil
+}
+
+func (r *Repository) MarkAssignmentCompleted(ctx context.Context, id, executorID string) (CourseAssignment, bool, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return CourseAssignment{}, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	before, err := lockMyAssignmentTx(ctx, tx, id, executorID)
+	if err != nil {
+		return CourseAssignment{}, false, err
+	}
+	if before.Status == "cancelled" {
+		return CourseAssignment{}, false, pgx.ErrNoRows
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO course_progress(assignment_id, executor_id, progress_percent, status, last_activity_at, completed_at)
-		VALUES($1,$2,100,'completed',NOW(),NOW())
-		ON CONFLICT (assignment_id) DO UPDATE
-		SET progress_percent=100, status='completed', last_activity_at=NOW(), completed_at=COALESCE(course_progress.completed_at, NOW()), updated_at=NOW()
-	`, a.ID, executorID); err != nil {
-		return CourseAssignment{}, err
+		INSERT INTO course_material_progress(assignment_id, material_id, executor_id)
+		SELECT $1, cm.id, $2
+		FROM course_materials cm
+		WHERE cm.course_id=$3
+		ON CONFLICT (assignment_id, material_id) DO UPDATE
+		SET updated_at=NOW()
+	`, before.ID, executorID, before.CourseID); err != nil {
+		return CourseAssignment{}, false, err
 	}
-	var c Course
-	if err := tx.QueryRow(ctx, `SELECT c.id, c.coach_id, c.created_by, c.title, c.description, c.status, c.created_at, c.updated_at, c.deleted_at FROM courses c WHERE c.id=$1`, a.CourseID).Scan(&c.ID, &c.CoachID, &c.CreatedBy, &c.Title, &c.Description, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.DeletedAt); err != nil {
-		return CourseAssignment{}, err
+	progress, err := refreshAssignmentProgressTx(ctx, tx, before.ID, executorID, true)
+	if err != nil {
+		return CourseAssignment{}, false, err
 	}
-	a.Course = &c
+	after, err := getAssignmentWithCourseTx(ctx, tx, before.ID)
+	if err != nil {
+		return CourseAssignment{}, false, err
+	}
+	after.Progress = &progress
+	completedNow := before.Status != "completed" && after.Status == "completed"
 	if err := tx.Commit(ctx); err != nil {
-		return CourseAssignment{}, err
+		return CourseAssignment{}, false, err
 	}
-	return a, nil
+	return after, completedNow, nil
+}
+
+func (r *Repository) MarkMaterialCompleted(ctx context.Context, assignmentID, materialID, executorID string) (CourseAssignment, bool, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return CourseAssignment{}, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	before, err := lockMyAssignmentTx(ctx, tx, assignmentID, executorID)
+	if err != nil {
+		return CourseAssignment{}, false, err
+	}
+	if before.Status == "cancelled" {
+		return CourseAssignment{}, false, pgx.ErrNoRows
+	}
+
+	var materialExists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM course_materials
+			WHERE id=$1 AND course_id=$2
+		)
+	`, materialID, before.CourseID).Scan(&materialExists); err != nil {
+		return CourseAssignment{}, false, err
+	}
+	if !materialExists {
+		return CourseAssignment{}, false, pgx.ErrNoRows
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO course_material_progress(assignment_id, material_id, executor_id)
+		VALUES($1,$2,$3)
+		ON CONFLICT (assignment_id, material_id) DO UPDATE
+		SET updated_at=NOW()
+	`, before.ID, materialID, executorID); err != nil {
+		return CourseAssignment{}, false, err
+	}
+
+	progress, err := refreshAssignmentProgressTx(ctx, tx, before.ID, executorID, false)
+	if err != nil {
+		return CourseAssignment{}, false, err
+	}
+	after, err := getAssignmentWithCourseTx(ctx, tx, before.ID)
+	if err != nil {
+		return CourseAssignment{}, false, err
+	}
+	after.Progress = &progress
+	completedNow := before.Status != "completed" && after.Status == "completed"
+	if err := tx.Commit(ctx); err != nil {
+		return CourseAssignment{}, false, err
+	}
+	return after, completedNow, nil
+}
+
+func lockMyAssignmentTx(ctx context.Context, tx pgx.Tx, id, executorID string) (CourseAssignment, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT ca.id, ca.course_id, ca.executor_id, ca.sanction_id, ca.assigned_by, ca.reason, ca.source, ca.status, ca.assigned_at, ca.due_at, ca.completed_at, ca.created_at, ca.updated_at,
+		       c.id, c.coach_id, c.created_by, c.title, c.description, c.status, c.created_at, c.updated_at, c.deleted_at
+		FROM course_assignments ca
+		JOIN courses c ON c.id = ca.course_id
+		WHERE ca.id=$1 AND ca.executor_id=$2 AND c.status='published' AND c.deleted_at IS NULL
+		FOR UPDATE OF ca
+	`, id, executorID)
+	return scanAssignmentWithCourse(row)
+}
+
+func getAssignmentWithCourseTx(ctx context.Context, tx pgx.Tx, id string) (CourseAssignment, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT ca.id, ca.course_id, ca.executor_id, ca.sanction_id, ca.assigned_by, ca.reason, ca.source, ca.status, ca.assigned_at, ca.due_at, ca.completed_at, ca.created_at, ca.updated_at,
+		       c.id, c.coach_id, c.created_by, c.title, c.description, c.status, c.created_at, c.updated_at, c.deleted_at
+		FROM course_assignments ca
+		JOIN courses c ON c.id = ca.course_id
+		WHERE ca.id=$1
+	`, id)
+	return scanAssignmentWithCourse(row)
+}
+
+func refreshAssignmentProgressTx(ctx context.Context, tx pgx.Tx, assignmentID, executorID string, allowEmptyComplete bool) (CourseProgress, error) {
+	var totalMaterials int
+	var completedMaterials int
+	var completedMaterialIDsCSV string
+	if err := tx.QueryRow(ctx, `
+		WITH assignment AS (
+			SELECT course_id FROM course_assignments WHERE id=$1 AND executor_id=$2
+		),
+		total AS (
+			SELECT COUNT(cm.id)::int AS total_materials
+			FROM assignment a
+			LEFT JOIN course_materials cm ON cm.course_id=a.course_id
+		),
+		completed AS (
+			SELECT COUNT(cmp.material_id)::int AS completed_materials,
+			       COALESCE(string_agg(cmp.material_id::text, ',' ORDER BY cmp.completed_at, cmp.material_id::text), '') AS material_ids
+			FROM course_material_progress cmp
+			JOIN course_materials cm ON cm.id=cmp.material_id
+			JOIN assignment a ON a.course_id=cm.course_id
+			WHERE cmp.assignment_id=$1
+		)
+		SELECT total.total_materials, completed.completed_materials, completed.material_ids
+		FROM total CROSS JOIN completed
+	`, assignmentID, executorID).Scan(&totalMaterials, &completedMaterials, &completedMaterialIDsCSV); err != nil {
+		return CourseProgress{}, err
+	}
+
+	progressPercent := 0
+	status := "assigned"
+	if totalMaterials > 0 {
+		progressPercent = completedMaterials * 100 / totalMaterials
+		if completedMaterials >= totalMaterials {
+			progressPercent = 100
+			status = "completed"
+		} else if completedMaterials > 0 {
+			status = "in_progress"
+		}
+	} else if allowEmptyComplete {
+		progressPercent = 100
+		status = "completed"
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE course_assignments
+		SET status=$2::course_assignment_status,
+			completed_at=CASE WHEN $2='completed' THEN COALESCE(completed_at, NOW()) ELSE NULL END,
+			updated_at=NOW()
+		WHERE id=$1
+	`, assignmentID, status); err != nil {
+		return CourseProgress{}, err
+	}
+
+	var progress CourseProgress
+	var createdAt time.Time
+	var updatedAt time.Time
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO course_progress(assignment_id, executor_id, progress_percent, status, last_activity_at, completed_at)
+		VALUES($1,$2,$3,$4::course_assignment_status,NOW(),CASE WHEN $4='completed' THEN NOW() ELSE NULL END)
+		ON CONFLICT (assignment_id) DO UPDATE
+		SET progress_percent=EXCLUDED.progress_percent,
+			status=EXCLUDED.status,
+			last_activity_at=NOW(),
+			completed_at=CASE WHEN EXCLUDED.status::text='completed' THEN COALESCE(course_progress.completed_at, NOW()) ELSE NULL END,
+			updated_at=NOW()
+		RETURNING id, assignment_id, executor_id, progress_percent, status, last_activity_at, completed_at, created_at, updated_at
+	`, assignmentID, executorID, progressPercent, status).Scan(&progress.ID, &progress.AssignmentID, &progress.ExecutorID, &progress.ProgressPercent, &progress.Status, &progress.LastActivityAt, &progress.CompletedAt, &createdAt, &updatedAt); err != nil {
+		return CourseProgress{}, err
+	}
+	progress.CreatedAt = &createdAt
+	progress.UpdatedAt = &updatedAt
+	progress.TotalMaterials = totalMaterials
+	progress.CompletedMaterials = completedMaterials
+	progress.CompletedMaterialIDs = splitCSV(completedMaterialIDsCSV)
+	return progress, nil
+}
+
+func (r *Repository) attachProgress(ctx context.Context, items []CourseAssignment) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT ca.id::text, ca.executor_id::text,
+		       cp.id::text, cp.progress_percent, cp.status::text, cp.last_activity_at, cp.completed_at, cp.created_at, cp.updated_at,
+		       COALESCE(total.total_materials, 0), COALESCE(done.completed_materials, 0), COALESCE(done.material_ids, '')
+		FROM course_assignments ca
+		LEFT JOIN course_progress cp ON cp.assignment_id=ca.id
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*)::int AS total_materials
+			FROM course_materials cm
+			WHERE cm.course_id=ca.course_id
+		) total ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT COUNT(cmp.material_id)::int AS completed_materials,
+			       COALESCE(string_agg(cmp.material_id::text, ',' ORDER BY cmp.completed_at, cmp.material_id::text), '') AS material_ids
+			FROM course_material_progress cmp
+			JOIN course_materials cm ON cm.id=cmp.material_id AND cm.course_id=ca.course_id
+			WHERE cmp.assignment_id=ca.id
+		) done ON TRUE
+		WHERE ca.id::text = ANY($1::text[])
+	`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	byAssignment := make(map[string]*CourseProgress, len(items))
+	for rows.Next() {
+		var assignmentID string
+		var executorID string
+		var progressID sql.NullString
+		var progressPercent sql.NullInt64
+		var status sql.NullString
+		var lastActivityAt sql.NullTime
+		var completedAt sql.NullTime
+		var createdAt sql.NullTime
+		var updatedAt sql.NullTime
+		var totalMaterials int
+		var completedMaterials int
+		var completedMaterialIDsCSV string
+		if err := rows.Scan(&assignmentID, &executorID, &progressID, &progressPercent, &status, &lastActivityAt, &completedAt, &createdAt, &updatedAt, &totalMaterials, &completedMaterials, &completedMaterialIDsCSV); err != nil {
+			return err
+		}
+
+		progress := &CourseProgress{
+			AssignmentID:         assignmentID,
+			ExecutorID:           executorID,
+			Status:               "assigned",
+			CompletedMaterials:   completedMaterials,
+			TotalMaterials:       totalMaterials,
+			CompletedMaterialIDs: splitCSV(completedMaterialIDsCSV),
+		}
+		if progressID.Valid {
+			progress.ID = progressID.String
+		}
+		if progressPercent.Valid {
+			progress.ProgressPercent = int(progressPercent.Int64)
+		} else if totalMaterials > 0 {
+			progress.ProgressPercent = completedMaterials * 100 / totalMaterials
+		}
+		if status.Valid {
+			progress.Status = status.String
+		}
+		if lastActivityAt.Valid {
+			progress.LastActivityAt = &lastActivityAt.Time
+		}
+		if completedAt.Valid {
+			progress.CompletedAt = &completedAt.Time
+		}
+		if createdAt.Valid {
+			progress.CreatedAt = &createdAt.Time
+		}
+		if updatedAt.Valid {
+			progress.UpdatedAt = &updatedAt.Time
+		}
+		byAssignment[assignmentID] = progress
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for i := range items {
+		progress, ok := byAssignment[items[i].ID]
+		if !ok {
+			progress = &CourseProgress{
+				AssignmentID: items[i].ID,
+				ExecutorID:   items[i].ExecutorID,
+				Status:       items[i].Status,
+			}
+		}
+		items[i].Progress = progress
+	}
+	return nil
+}
+
+func splitCSV(value string) []string {
+	if value == "" {
+		return nil
+	}
+	return strings.Split(value, ",")
 }
 
 func scanAssignmentsWithCourse(rows pgx.Rows) ([]CourseAssignment, error) {
