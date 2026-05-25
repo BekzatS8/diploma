@@ -50,36 +50,77 @@ func (r *Repository) GetTransaction(ctx context.Context, tx pgx.Tx, id string) (
 	return t, err
 }
 
+func (r *Repository) GetTransactionByProviderRef(ctx context.Context, tx pgx.Tx, provider, providerRef string) (Transaction, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT id::text, status, object_type, order_id::text, response_id::text, user_id::text, paid_at
+		FROM payment_transactions
+		WHERE provider=$1
+		  AND (provider_transaction_id=$2 OR yookassa_payment_id=$2)
+		FOR UPDATE
+	`, provider, providerRef)
+	var t Transaction
+	err := row.Scan(&t.ID, &t.Status, &t.ObjectType, &t.OrderID, &t.ResponseID, &t.UserID, &t.PaidAt)
+	return t, err
+}
+
 func (r *Repository) Confirm(ctx context.Context, id string) (ConfirmResult, error) {
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return ConfirmResult{}, err
 	}
 	defer tx.Rollback(ctx)
-	result := ConfirmResult{TransactionID: id}
 
 	payment, err := r.GetTransaction(ctx, tx, id)
 	if err != nil {
 		return ConfirmResult{}, err
 	}
-	if payment.Status == "succeeded" {
+	result := ConfirmResult{TransactionID: payment.ID}
+	if err := r.confirmLocked(ctx, tx, payment, &result, "payment confirmed (dev)"); err != nil {
+		return ConfirmResult{}, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+func (r *Repository) ConfirmByProviderRef(ctx context.Context, provider, providerRef string) (ConfirmResult, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ConfirmResult{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	payment, err := r.GetTransactionByProviderRef(ctx, tx, provider, providerRef)
+	if err != nil {
+		return ConfirmResult{}, err
+	}
+	result := ConfirmResult{TransactionID: payment.ID}
+	if payment.Status != "pending" && payment.Status != "succeeded" {
 		return result, tx.Commit(ctx)
 	}
+	if err := r.confirmLocked(ctx, tx, payment, &result, "payment confirmed (yookassa webhook)"); err != nil {
+		return ConfirmResult{}, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+func (r *Repository) confirmLocked(ctx context.Context, tx pgx.Tx, payment Transaction, result *ConfirmResult, reason string) error {
+	if payment.Status == "succeeded" {
+		return nil
+	}
 	if payment.Status != "pending" {
-		return ConfirmResult{}, fmt.Errorf("cannot confirm payment with status %s", payment.Status)
+		return fmt.Errorf("cannot confirm payment with status %s", payment.Status)
 	}
 
 	switch payment.ObjectType {
 	case "order_posting":
 		if payment.OrderID == nil {
-			return ConfirmResult{}, fmt.Errorf("order id is required")
+			return fmt.Errorf("order id is required")
 		}
 		var old string
 		if err := tx.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1 FOR UPDATE`, *payment.OrderID).Scan(&old); err != nil {
-			return ConfirmResult{}, err
+			return err
 		}
 		if !ordersmodule.CanTransition(old, ordersmodule.StatusPublished) {
-			return ConfirmResult{}, fmt.Errorf("cannot publish order with status %s", old)
+			return fmt.Errorf("cannot publish order with status %s", old)
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE orders
@@ -92,15 +133,15 @@ func (r *Repository) Confirm(ctx context.Context, id string) (ConfirmResult, err
 			    updated_at=NOW()
 			WHERE id=$1
 		`, *payment.OrderID); err != nil {
-			return ConfirmResult{}, err
+			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO order_status_history(order_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'published',$3,$4)`, *payment.OrderID, old, payment.UserID, "payment confirmed (dev)"); err != nil {
-			return ConfirmResult{}, err
+		if _, err := tx.Exec(ctx, `INSERT INTO order_status_history(order_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'published',$3,$4)`, *payment.OrderID, old, payment.UserID, reason); err != nil {
+			return err
 		}
 		result.OrderPublishedForClient = &OrderPublishedEvent{OrderID: *payment.OrderID, ClientID: payment.UserID}
 	case "response_submission":
 		if payment.ResponseID == nil {
-			return ConfirmResult{}, fmt.Errorf("response id is required")
+			return fmt.Errorf("response id is required")
 		}
 		var orderID string
 		var old string
@@ -112,23 +153,23 @@ func (r *Repository) Confirm(ctx context.Context, id string) (ConfirmResult, err
 			WHERE r.id=$1
 			FOR UPDATE
 		`, *payment.ResponseID).Scan(&old, &orderID, &clientID); err != nil {
-			return ConfirmResult{}, err
+			return err
 		}
 		if !responsesmodule.CanTransition(old, responsesmodule.StatusSubmitted) {
-			return ConfirmResult{}, fmt.Errorf("cannot submit response with status %s", old)
+			return fmt.Errorf("cannot submit response with status %s", old)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE responses SET status='submitted', is_paid=TRUE, paid_at=NOW(), updated_at=NOW() WHERE id=$1`, *payment.ResponseID); err != nil {
-			return ConfirmResult{}, err
+			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO response_status_history(response_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'submitted',$3,$4)`, *payment.ResponseID, old, payment.UserID, "payment confirmed (dev)"); err != nil {
-			return ConfirmResult{}, err
+		if _, err := tx.Exec(ctx, `INSERT INTO response_status_history(response_id, old_status, new_status, changed_by, reason) VALUES($1,$2,'submitted',$3,$4)`, *payment.ResponseID, old, payment.UserID, reason); err != nil {
+			return err
 		}
 		result.ResponseSubmittedClient = &ResponseSubmittedEvent{ResponseID: *payment.ResponseID, OrderID: orderID, ClientID: clientID}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE payment_transactions SET status='succeeded', paid_at=NOW() WHERE id=$1`, id); err != nil {
-		return ConfirmResult{}, err
+	if _, err := tx.Exec(ctx, `UPDATE payment_transactions SET status='succeeded', paid_at=NOW() WHERE id=$1`, payment.ID); err != nil {
+		return err
 	}
-	return result, tx.Commit(ctx)
+	return nil
 }
 
 func (r *Repository) Fail(ctx context.Context, id string) error {

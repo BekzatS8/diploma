@@ -17,6 +17,7 @@ import (
 	leadsmodule "buhpro/internal/modules/leads"
 	notificationsmodule "buhpro/internal/modules/notifications"
 	ordersmodule "buhpro/internal/modules/orders"
+	paymentmodule "buhpro/internal/modules/payment"
 	profilemodule "buhpro/internal/modules/profile"
 	ratingsmodule "buhpro/internal/modules/ratingsanctions"
 	responsesmodule "buhpro/internal/modules/responses"
@@ -39,6 +40,7 @@ type Deps struct {
 	ProfileHandler       *profilemodule.Handler
 	OrdersHandler        *ordersmodule.Handler
 	ResponsesHandler     *responsesmodule.Handler
+	PaymentHandler       *paymentmodule.Handler
 	DevPaymentsHandler   *devpaymentsmodule.Handler
 	SelectionHandler     *selectionmodule.Handler
 	ReviewsHandler       *reviewsmodule.Handler
@@ -185,6 +187,12 @@ func New(deps Deps) *gin.Engine {
 		clientResponsesGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("client", "admin"))
 		clientResponsesGroup.GET("", deps.ResponsesHandler.ListClientOrder)
 		clientResponsesGroup.GET("/:responseId", deps.ResponsesHandler.GetClientOrderByID)
+
+		paymentGroup := v1.Group("/payment")
+		paymentGroup.POST("/webhook", deps.PaymentHandler.Webhook)
+		paymentGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("client"))
+		paymentGroup.POST("/create", deps.PaymentHandler.Create)
+
 		devPaymentsGroup := v1.Group("/dev/payments")
 		devPaymentsGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
 		devPaymentsGroup.POST("/:transactionId/confirm", deps.DevPaymentsHandler.Confirm)
@@ -214,9 +222,11 @@ func New(deps Deps) *gin.Engine {
 		adminSanctions.POST("/:id/lift", deps.RatingHandler.Lift)
 
 		coachCourses := v1.Group("/coach/courses")
-		coachCourses.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("coach", "admin"))
+		coachCourses.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("coach", "executor", "admin"))
 		coachCourses.POST("", deps.CoursesHandler.CreateCourse)
 		coachCourses.PATCH("/:id", deps.CoursesHandler.PatchCourse)
+		coachCourses.GET("/analytics", deps.CoursesHandler.CreatorAnalytics)
+		coachCourses.GET("/:id/students", deps.CoursesHandler.ListCourseStudents)
 		coachCourses.GET("/:id", deps.CoursesHandler.GetCoachCourse)
 		coachCourses.GET("", deps.CoursesHandler.ListCoachCourses)
 		coachCourses.POST("/:id/publish", deps.CoursesHandler.PublishCourse)

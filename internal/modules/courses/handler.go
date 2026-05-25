@@ -74,13 +74,49 @@ func (h *Handler) ListCoachCourses(c *gin.Context) {
 		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
 		return
 	}
-	q := ListCoursesQuery{Status: strings.TrimSpace(c.Query("status")), Page: parseIntDefault(c.Query("page"), 1), PageSize: parseIntDefault(c.Query("page_size"), 20)}
+	q := ListCoursesQuery{
+		Status:   strings.TrimSpace(c.Query("status")),
+		Category: strings.TrimSpace(c.Query("category")),
+		Search:   strings.TrimSpace(c.Query("q")),
+		Page:     parseIntDefault(c.Query("page"), 1),
+		PageSize: parseIntDefault(c.Query("page_size"), 20),
+	}
 	items, total, err := h.service.ListCoachCourses(c.Request.Context(), user.UserID, user.PrimaryRole(), q)
 	if err != nil {
 		h.handleErr(c, err)
 		return
 	}
 	response.JSON(c, http.StatusOK, response.ListEnvelope[Course]{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total})
+}
+
+func (h *Handler) CreatorAnalytics(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	item, err := h.service.CreatorAnalytics(c.Request.Context(), user.UserID, user.PrimaryRole())
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, item)
+}
+
+func (h *Handler) ListCourseStudents(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	page := parseIntDefault(c.Query("page"), 1)
+	size := parseIntDefault(c.Query("page_size"), 20)
+	items, total, err := h.service.ListCourseStudents(c.Request.Context(), c.Param("id"), user.UserID, user.PrimaryRole(), page, size)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, response.ListEnvelope[CourseStudent]{Items: items, Page: page, PageSize: size, Total: total})
 }
 
 func (h *Handler) PublishCourse(c *gin.Context) {
@@ -168,7 +204,13 @@ func (h *Handler) ListCourses(c *gin.Context) {
 		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
 		return
 	}
-	q := ListCoursesQuery{Status: strings.TrimSpace(c.Query("status")), Page: parseIntDefault(c.Query("page"), 1), PageSize: parseIntDefault(c.Query("page_size"), 20)}
+	q := ListCoursesQuery{
+		Status:   strings.TrimSpace(c.Query("status")),
+		Category: strings.TrimSpace(c.Query("category")),
+		Search:   strings.TrimSpace(c.Query("q")),
+		Page:     parseIntDefault(c.Query("page"), 1),
+		PageSize: parseIntDefault(c.Query("page_size"), 20),
+	}
 	items, total, err := h.service.ListCoursesForRole(c.Request.Context(), user.UserID, user.PrimaryRole(), q)
 	if err != nil {
 		h.handleErr(c, err)

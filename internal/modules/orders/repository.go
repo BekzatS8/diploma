@@ -324,10 +324,10 @@ func (r *Repository) SubmitWithPayment(ctx context.Context, orderID, clientID st
 
 	payRow := tx.QueryRow(ctx, `
 		INSERT INTO payment_transactions (
-			user_id, object_type, object_id, order_id, provider, provider_transaction_id,
+			user_id, object_type, object_id, order_id, provider, provider_transaction_id, yookassa_payment_id,
 			amount, currency, status, metadata
 		)
-		VALUES ($1, 'order_posting', $2, $2, $3, $4, $5, $6, 'pending', $7::jsonb)
+		VALUES ($1, 'order_posting', $2, $2, $3, $4, CASE WHEN $3 = 'yookassa' THEN $4 ELSE NULL END, $5, $6, 'pending', $7::jsonb)
 		RETURNING id::text, order_id::text, provider, provider_transaction_id, amount, currency, status, initiated_at
 	`, clientID, orderID, provider, providerRef, totalCharge, currency,
 		fmt.Sprintf(`{"checkout_url":%q,"posting_fee":%v,"promotion_fee":%v,"escrow_amount":%v}`, checkoutURL, postingFee, promotionFee, escrowAmount),

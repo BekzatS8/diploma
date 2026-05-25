@@ -3,6 +3,7 @@ package orders
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 
 	"buhpro/internal/platform/payments"
@@ -181,6 +182,14 @@ func (s *Service) DeleteMy(ctx context.Context, userID, role, id string) error {
 }
 
 func (s *Service) Submit(ctx context.Context, userID, role, id string) (Order, PaymentTransaction, payments.ChargeResponse, error) {
+	return s.submit(ctx, userID, role, id, nil)
+}
+
+func (s *Service) SubmitExpectedAmount(ctx context.Context, userID, role, id string, expectedAmount float64) (Order, PaymentTransaction, payments.ChargeResponse, error) {
+	return s.submit(ctx, userID, role, id, &expectedAmount)
+}
+
+func (s *Service) submit(ctx context.Context, userID, role, id string, expectedAmount *float64) (Order, PaymentTransaction, payments.ChargeResponse, error) {
 	if role != "client" {
 		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrInvalidRole
 	}
@@ -201,7 +210,11 @@ func (s *Service) Submit(ctx context.Context, userID, role, id string) (Order, P
 	promotionFee := promotionFee(order.PromotionOptions)
 	escrowAmount := order.BudgetAmount
 	totalCharge := s.postingFee + promotionFee + escrowAmount
-	charge, err := s.paymentProvider.CreateCharge(ctx, payments.ChargeRequest{OrderID: order.ID, AmountCents: int64(totalCharge * 100), CurrencyCode: s.defaultCurrency, Description: "Order posting fee"})
+	totalCents := amountToCents(totalCharge)
+	if expectedAmount != nil && amountToCents(*expectedAmount) != totalCents {
+		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrInvalidInput
+	}
+	charge, err := s.paymentProvider.CreateCharge(ctx, payments.ChargeRequest{OrderID: order.ID, AmountCents: totalCents, CurrencyCode: s.defaultCurrency, Description: "Order posting fee"})
 	if err != nil {
 		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, err
 	}
@@ -214,6 +227,10 @@ func (s *Service) Submit(ctx context.Context, userID, role, id string) (Order, P
 		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, err
 	}
 	return updated, tx, charge, nil
+}
+
+func amountToCents(value float64) int64 {
+	return int64(math.Round(value * 100))
 }
 
 func (s *Service) Cancel(ctx context.Context, userID, role, id string) (Order, error) {

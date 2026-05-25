@@ -23,6 +23,7 @@ import (
 	leadsmodule "buhpro/internal/modules/leads"
 	notificationsmodule "buhpro/internal/modules/notifications"
 	ordersmodule "buhpro/internal/modules/orders"
+	paymentmodule "buhpro/internal/modules/payment"
 	profilemodule "buhpro/internal/modules/profile"
 	ratingsmodule "buhpro/internal/modules/ratingsanctions"
 	responsesmodule "buhpro/internal/modules/responses"
@@ -83,6 +84,16 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 		return nil, fmt.Errorf("init storage: %w", err)
 	}
 	paymentProvider := payments.NewMock()
+	if cfg.Payments.Provider == "yookassa" {
+		paymentProvider, err = payments.NewYooKassa(payments.YooKassaConfig{
+			ShopID:    cfg.Payments.YooKassaShopID,
+			SecretKey: cfg.Payments.YooKassaSecretKey,
+			ReturnURL: cfg.Payments.YooKassaReturnURL,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("init yookassa payment provider: %w", err)
+		}
+	}
 
 	authRepo := authmodule.NewRepository(dbPool)
 	authService := authmodule.NewService(authRepo, jwtManager)
@@ -104,12 +115,16 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	devPaymentsRepo := devpaymentsmodule.NewRepository(dbPool)
 	devEndpointsEnabled := cfg.App.Env != "production" && cfg.Dev.EnablePaymentEndpoints
 	devPaymentsService := devpaymentsmodule.NewService(devPaymentsRepo, devEndpointsEnabled, notificationsService)
+	paymentService := paymentmodule.NewService(ordersService, devPaymentsService)
 	selectionRepo := selectionmodule.NewRepository(dbPool)
 	selectionService := selectionmodule.NewService(selectionRepo, notificationsService)
 	reviewsRepo := reviewsmodule.NewRepository(dbPool)
 	reviewsService := reviewsmodule.NewService(reviewsRepo, dbPool, ratingService, notificationsService)
 	coursesRepo := coursesmodule.NewRepository(dbPool)
-	coursesService := coursesmodule.NewService(coursesRepo, notificationsService, uploadsService)
+	coursesService := coursesmodule.NewService(coursesRepo, notificationsService, uploadsService, coursesmodule.ServiceOptions{
+		ExecutorCreatorMinRating:  cfg.Courses.ExecutorCreatorMinRating,
+		ExecutorCreatorMinReviews: cfg.Courses.ExecutorCreatorMinReviews,
+	})
 	chatsRepo := chatsmodule.NewRepository(dbPool)
 	chatsService := chatsmodule.NewService(chatsRepo, notificationsService, uploadsService)
 	attachmentsRepo := attachmentsmodule.NewRepository(dbPool)
@@ -131,6 +146,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	ordersHandler := ordersmodule.NewHandler(ordersService)
 	responsesHandler := responsesmodule.NewHandler(responsesService)
 	devPaymentsHandler := devpaymentsmodule.NewHandler(devPaymentsService)
+	paymentHandler := paymentmodule.NewHandler(paymentService)
 	selectionHandler := selectionmodule.NewHandler(selectionService)
 	reviewsHandler := reviewsmodule.NewHandler(reviewsService)
 	ratingHandler := ratingsmodule.NewHandler(ratingService)
@@ -154,6 +170,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 		ProfileHandler:       profileHandler,
 		OrdersHandler:        ordersHandler,
 		ResponsesHandler:     responsesHandler,
+		PaymentHandler:       paymentHandler,
 		DevPaymentsHandler:   devPaymentsHandler,
 		SelectionHandler:     selectionHandler,
 		ReviewsHandler:       reviewsHandler,

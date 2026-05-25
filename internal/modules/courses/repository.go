@@ -3,6 +3,7 @@ package courses
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -16,33 +17,69 @@ type Repository struct{ db *pgxpool.Pool }
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 type CreateCourseParams struct {
-	CreatorID   string
-	Title       string
-	Description *string
+	CreatorID          string
+	Title              string
+	Subtitle           *string
+	Description        *string
+	Slug               *string
+	Category           *string
+	Level              string
+	Language           string
+	Price              float64
+	Currency           string
+	DurationMinutes    int
+	CoverUploadID      *string
+	CoverURL           *string
+	Tags               []string
+	LearningOutcomes   []string
+	Requirements       []string
+	CertificateEnabled bool
 }
 
 type UpdateCourseParams struct {
-	Title       *string
-	Description *string
+	Title              *string
+	Subtitle           *string
+	Description        *string
+	Slug               *string
+	Category           *string
+	Level              *string
+	Language           *string
+	Price              *float64
+	Currency           *string
+	DurationMinutes    *int
+	CoverUploadID      *string
+	CoverURL           *string
+	Tags               []string
+	LearningOutcomes   []string
+	Requirements       []string
+	CertificateEnabled *bool
 }
 
 type CreateMaterialParams struct {
-	CourseID     string
-	Title        string
-	MaterialType string
-	UploadID     *string
-	URL          *string
-	Content      *string
-	SortOrder    int
+	CourseID        string
+	Title           string
+	Description     *string
+	MaterialType    string
+	UploadID        *string
+	URL             *string
+	Content         *string
+	SortOrder       int
+	DurationSeconds int
+	IsPreview       bool
+	Metadata        map[string]any
 }
 
 type UpdateMaterialParams struct {
-	Title        *string
-	MaterialType *string
-	UploadID     *string
-	URL          *string
-	Content      *string
-	SortOrder    *int
+	Title           *string
+	Description     *string
+	MaterialType    *string
+	UploadID        *string
+	URL             *string
+	Content         *string
+	SortOrder       *int
+	DurationSeconds *int
+	IsPreview       *bool
+	Metadata        map[string]any
 }
 
 type CreateAssignmentParams struct {
@@ -55,40 +92,104 @@ type CreateAssignmentParams struct {
 	DueAt      interface{}
 }
 
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func courseColumns(alias string) string {
+	p := ""
+	if alias != "" {
+		p = alias + "."
+	}
+	return p + `id::text, ` + p + `coach_id::text, ` + p + `created_by::text, ` + p + `title, ` + p + `subtitle, ` + p + `description, ` +
+		p + `slug, ` + p + `category, ` + p + `level, ` + p + `language, ` + p + `price::float8, ` + p + `currency, ` +
+		p + `duration_minutes, ` + p + `cover_upload_id::text, ` + p + `cover_url, ` + p + `tags, ` + p + `learning_outcomes, ` +
+		p + `requirements, ` + p + `certificate_enabled, ` + p + `status, ` + p + `moderation_status, ` + p + `enrollment_count, ` +
+		p + `rating_avg::float8, ` + p + `rating_count, ` + p + `published_at, ` + p + `archived_at, ` + p + `created_at, ` + p + `updated_at, ` + p + `deleted_at`
+}
+
+func courseScanDest(c *Course) []any {
+	return []any{
+		&c.ID, &c.CoachID, &c.CreatedBy, &c.Title, &c.Subtitle, &c.Description,
+		&c.Slug, &c.Category, &c.Level, &c.Language, &c.Price, &c.Currency,
+		&c.DurationMinutes, &c.CoverUploadID, &c.CoverURL, &c.Tags, &c.LearningOutcomes,
+		&c.Requirements, &c.CertificateEnabled, &c.Status, &c.ModerationStatus, &c.EnrollmentCount,
+		&c.RatingAvg, &c.RatingCount, &c.PublishedAt, &c.ArchivedAt, &c.CreatedAt, &c.UpdatedAt, &c.DeletedAt,
+	}
+}
+
+func scanCourse(row scanner) (Course, error) {
+	var c Course
+	err := row.Scan(courseScanDest(&c)...)
+	return c, err
+}
+
+func materialColumns() string {
+	return `id::text, course_id::text, material_type, title, description, upload_id::text, url, content, sort_order, duration_seconds, is_preview, metadata, created_at, updated_at`
+}
+
+func scanMaterial(row scanner) (CourseMaterial, error) {
+	var m CourseMaterial
+	var metadata []byte
+	err := row.Scan(&m.ID, &m.CourseID, &m.MaterialType, &m.Title, &m.Description, &m.UploadID, &m.URL, &m.Content, &m.SortOrder, &m.DurationSeconds, &m.IsPreview, &metadata, &m.CreatedAt, &m.UpdatedAt)
+	if err != nil {
+		return CourseMaterial{}, err
+	}
+	m.Metadata = map[string]any{}
+	if len(metadata) > 0 {
+		if err := json.Unmarshal(metadata, &m.Metadata); err != nil {
+			return CourseMaterial{}, err
+		}
+	}
+	return m, nil
+}
+
 func (r *Repository) CreateCourse(ctx context.Context, p CreateCourseParams) (Course, error) {
 	row := r.db.QueryRow(ctx, `
-		INSERT INTO courses(coach_id, created_by, title, description, status)
-		VALUES($1,$1,$2,$3,'draft')
-		RETURNING id, coach_id, created_by, title, description, status, created_at, updated_at, deleted_at
-	`, p.CreatorID, p.Title, p.Description)
-	var c Course
-	err := row.Scan(&c.ID, &c.CoachID, &c.CreatedBy, &c.Title, &c.Description, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.DeletedAt)
-	return c, err
+		INSERT INTO courses(
+			coach_id, created_by, title, subtitle, description, slug, category, level, language,
+			price, currency, duration_minutes, cover_upload_id, cover_url, tags, learning_outcomes,
+			requirements, certificate_enabled, status, moderation_status
+		)
+		VALUES($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'draft','approved')
+		RETURNING `+courseColumns("")+`
+	`, p.CreatorID, p.Title, p.Subtitle, p.Description, p.Slug, p.Category, p.Level, p.Language, p.Price, p.Currency, p.DurationMinutes, p.CoverUploadID, p.CoverURL, p.Tags, p.LearningOutcomes, p.Requirements, p.CertificateEnabled)
+	return scanCourse(row)
 }
 
 func (r *Repository) UpdateCourse(ctx context.Context, id, ownerID string, isAdmin bool, p UpdateCourseParams) (Course, error) {
 	query := `
 		UPDATE courses SET
 			title=COALESCE($3,title),
-			description=COALESCE($4,description),
+			subtitle=COALESCE($4,subtitle),
+			description=COALESCE($5,description),
+			slug=COALESCE($6,slug),
+			category=COALESCE($7,category),
+			level=COALESCE($8,level),
+			language=COALESCE($9,language),
+			price=COALESCE($10,price),
+			currency=COALESCE($11,currency),
+			duration_minutes=COALESCE($12,duration_minutes),
+			cover_upload_id=COALESCE($13,cover_upload_id),
+			cover_url=COALESCE($14,cover_url),
+			tags=COALESCE($15,tags),
+			learning_outcomes=COALESCE($16,learning_outcomes),
+			requirements=COALESCE($17,requirements),
+			certificate_enabled=COALESCE($18,certificate_enabled),
 			updated_at=NOW()
 		WHERE id=$1 AND deleted_at IS NULL`
-	args := []interface{}{id, ownerID, p.Title, p.Description}
+	args := []interface{}{id, ownerID, p.Title, p.Subtitle, p.Description, p.Slug, p.Category, p.Level, p.Language, p.Price, p.Currency, p.DurationMinutes, p.CoverUploadID, p.CoverURL, nullableStringSlice(p.Tags), nullableStringSlice(p.LearningOutcomes), nullableStringSlice(p.Requirements), p.CertificateEnabled}
 	if !isAdmin {
 		query += ` AND (coach_id=$2 OR created_by=$2)`
 	}
-	query += ` RETURNING id, coach_id, created_by, title, description, status, created_at, updated_at, deleted_at`
+	query += ` RETURNING ` + courseColumns("")
 	row := r.db.QueryRow(ctx, query, args...)
-	var c Course
-	err := row.Scan(&c.ID, &c.CoachID, &c.CreatedBy, &c.Title, &c.Description, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.DeletedAt)
-	return c, err
+	return scanCourse(row)
 }
 
 func (r *Repository) GetCourseByID(ctx context.Context, id string) (Course, error) {
-	row := r.db.QueryRow(ctx, `SELECT id, coach_id, created_by, title, description, status, created_at, updated_at, deleted_at FROM courses WHERE id=$1`, id)
-	var c Course
-	err := row.Scan(&c.ID, &c.CoachID, &c.CreatedBy, &c.Title, &c.Description, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.DeletedAt)
-	return c, err
+	row := r.db.QueryRow(ctx, `SELECT `+courseColumns("")+` FROM courses WHERE id=$1`, id)
+	return scanCourse(row)
 }
 
 func (r *Repository) ListCourses(ctx context.Context, role, userID string, q ListCoursesQuery) ([]Course, int64, error) {
@@ -100,12 +201,26 @@ func (r *Repository) ListCourses(ctx context.Context, role, userID string, q Lis
 		args = append(args, q.Status)
 		argPos++
 	}
+	if q.Category != "" {
+		where = append(where, fmt.Sprintf("category=$%d", argPos))
+		args = append(args, q.Category)
+		argPos++
+	}
+	if q.Search != "" {
+		where = append(where, fmt.Sprintf("(title ILIKE $%d OR subtitle ILIKE $%d OR description ILIKE $%d)", argPos, argPos, argPos))
+		args = append(args, "%"+q.Search+"%")
+		argPos++
+	}
 	if role == "coach" {
 		where = append(where, fmt.Sprintf("(coach_id=$%d OR created_by=$%d)", argPos, argPos))
 		args = append(args, userID)
 		argPos++
+	} else if role == "admin" {
+		// admins can view all courses
 	} else if role == "executor" {
-		where = append(where, "status='published'")
+		if q.Status == "" {
+			where = append(where, "status='published'")
+		}
 	}
 	whereSQL := strings.Join(where, " AND ")
 	var total int64
@@ -113,15 +228,15 @@ func (r *Repository) ListCourses(ctx context.Context, role, userID string, q Lis
 		return nil, 0, err
 	}
 	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
-	rows, err := r.db.Query(ctx, "SELECT id, coach_id, created_by, title, description, status, created_at, updated_at, deleted_at FROM courses WHERE "+whereSQL+" ORDER BY created_at DESC LIMIT $"+fmt.Sprintf("%d", argPos)+" OFFSET $"+fmt.Sprintf("%d", argPos+1), args...)
+	rows, err := r.db.Query(ctx, "SELECT "+courseColumns("")+" FROM courses WHERE "+whereSQL+" ORDER BY updated_at DESC, created_at DESC LIMIT $"+fmt.Sprintf("%d", argPos)+" OFFSET $"+fmt.Sprintf("%d", argPos+1), args...)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
 	items := make([]Course, 0)
 	for rows.Next() {
-		var c Course
-		if err := rows.Scan(&c.ID, &c.CoachID, &c.CreatedBy, &c.Title, &c.Description, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.DeletedAt); err != nil {
+		c, err := scanCourse(rows)
+		if err != nil {
 			return nil, 0, err
 		}
 		items = append(items, c)
@@ -135,10 +250,10 @@ func (r *Repository) TransitionCourseStatus(ctx context.Context, id, actorID, fr
 		return Course{}, err
 	}
 	defer tx.Rollback(ctx)
-	query := `SELECT id, coach_id, created_by, title, description, status, created_at, updated_at, deleted_at FROM courses WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`
+	query := `SELECT ` + courseColumns("") + ` FROM courses WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`
 	row := tx.QueryRow(ctx, query, id)
-	var c Course
-	if err := row.Scan(&c.ID, &c.CoachID, &c.CreatedBy, &c.Title, &c.Description, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.DeletedAt); err != nil {
+	c, err := scanCourse(row)
+	if err != nil {
 		return Course{}, err
 	}
 	if c.Status != from {
@@ -149,10 +264,19 @@ func (r *Repository) TransitionCourseStatus(ctx context.Context, id, actorID, fr
 			return Course{}, pgx.ErrNoRows
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE courses SET status=$2, is_published=($2='published'), updated_at=NOW() WHERE id=$1`, id, to); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE courses
+		SET status=$2,
+			is_published=($2='published'),
+			published_at=CASE WHEN $2='published' THEN COALESCE(published_at, NOW()) ELSE published_at END,
+			archived_at=CASE WHEN $2='archived' THEN COALESCE(archived_at, NOW()) ELSE archived_at END,
+			updated_at=NOW()
+		WHERE id=$1
+	`, id, to); err != nil {
 		return Course{}, err
 	}
-	if err := tx.QueryRow(ctx, `SELECT id, coach_id, created_by, title, description, status, created_at, updated_at, deleted_at FROM courses WHERE id=$1`, id).Scan(&c.ID, &c.CoachID, &c.CreatedBy, &c.Title, &c.Description, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.DeletedAt); err != nil {
+	c, err = scanCourse(tx.QueryRow(ctx, `SELECT `+courseColumns("")+` FROM courses WHERE id=$1`, id))
+	if err != nil {
 		return Course{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -162,32 +286,44 @@ func (r *Repository) TransitionCourseStatus(ctx context.Context, id, actorID, fr
 }
 
 func (r *Repository) CreateMaterial(ctx context.Context, p CreateMaterialParams) (CourseMaterial, error) {
+	metadata, err := json.Marshal(nonNilMap(p.Metadata))
+	if err != nil {
+		return CourseMaterial{}, err
+	}
 	row := r.db.QueryRow(ctx, `
-		INSERT INTO course_materials(course_id, material_type, title, upload_id, url, content, sort_order)
-		VALUES($1,$2,$3,$4,$5,$6,$7)
-		RETURNING id, course_id, material_type, title, upload_id::text, url, content, sort_order, created_at, updated_at
-	`, p.CourseID, p.MaterialType, p.Title, p.UploadID, p.URL, p.Content, p.SortOrder)
-	var m CourseMaterial
-	err := row.Scan(&m.ID, &m.CourseID, &m.MaterialType, &m.Title, &m.UploadID, &m.URL, &m.Content, &m.SortOrder, &m.CreatedAt, &m.UpdatedAt)
-	return m, err
+		INSERT INTO course_materials(course_id, material_type, title, description, upload_id, url, content, sort_order, duration_seconds, is_preview, metadata)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		RETURNING `+materialColumns()+`
+	`, p.CourseID, p.MaterialType, p.Title, p.Description, p.UploadID, p.URL, p.Content, p.SortOrder, p.DurationSeconds, p.IsPreview, metadata)
+	return scanMaterial(row)
 }
 
 func (r *Repository) UpdateMaterial(ctx context.Context, courseID, materialID string, p UpdateMaterialParams) (CourseMaterial, error) {
+	var metadata any
+	if p.Metadata != nil {
+		value, err := json.Marshal(nonNilMap(p.Metadata))
+		if err != nil {
+			return CourseMaterial{}, err
+		}
+		metadata = value
+	}
 	row := r.db.QueryRow(ctx, `
 		UPDATE course_materials SET
 			title=COALESCE($3,title),
-			material_type=COALESCE($4,material_type),
-			upload_id=COALESCE($5,upload_id),
-			url=COALESCE($6,url),
-			content=COALESCE($7,content),
-			sort_order=COALESCE($8,sort_order),
+			description=COALESCE($4,description),
+			material_type=COALESCE($5,material_type),
+			upload_id=COALESCE($6,upload_id),
+			url=COALESCE($7,url),
+			content=COALESCE($8,content),
+			sort_order=COALESCE($9,sort_order),
+			duration_seconds=COALESCE($10,duration_seconds),
+			is_preview=COALESCE($11,is_preview),
+			metadata=COALESCE($12::jsonb,metadata),
 			updated_at=NOW()
 		WHERE id=$1 AND course_id=$2
-		RETURNING id, course_id, material_type, title, upload_id::text, url, content, sort_order, created_at, updated_at
-	`, materialID, courseID, p.Title, p.MaterialType, p.UploadID, p.URL, p.Content, p.SortOrder)
-	var m CourseMaterial
-	err := row.Scan(&m.ID, &m.CourseID, &m.MaterialType, &m.Title, &m.UploadID, &m.URL, &m.Content, &m.SortOrder, &m.CreatedAt, &m.UpdatedAt)
-	return m, err
+		RETURNING `+materialColumns()+`
+	`, materialID, courseID, p.Title, p.Description, p.MaterialType, p.UploadID, p.URL, p.Content, p.SortOrder, p.DurationSeconds, p.IsPreview, metadata)
+	return scanMaterial(row)
 }
 
 func (r *Repository) DeleteMaterial(ctx context.Context, courseID, materialID string) error {
@@ -202,15 +338,15 @@ func (r *Repository) DeleteMaterial(ctx context.Context, courseID, materialID st
 }
 
 func (r *Repository) ListMaterialsByCourse(ctx context.Context, courseID string) ([]CourseMaterial, error) {
-	rows, err := r.db.Query(ctx, `SELECT id, course_id, material_type, title, upload_id::text, url, content, sort_order, created_at, updated_at FROM course_materials WHERE course_id=$1 ORDER BY sort_order ASC, created_at ASC`, courseID)
+	rows, err := r.db.Query(ctx, `SELECT `+materialColumns()+` FROM course_materials WHERE course_id=$1 ORDER BY sort_order ASC, created_at ASC`, courseID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	items := make([]CourseMaterial, 0)
 	for rows.Next() {
-		var m CourseMaterial
-		if err := rows.Scan(&m.ID, &m.CourseID, &m.MaterialType, &m.Title, &m.UploadID, &m.URL, &m.Content, &m.SortOrder, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		m, err := scanMaterial(rows)
+		if err != nil {
 			return nil, err
 		}
 		items = append(items, m)
@@ -254,6 +390,132 @@ func (r *Repository) IsCoursePublished(ctx context.Context, courseID string) (bo
 	return exists, err
 }
 
+func (r *Repository) ExecutorRating(ctx context.Context, executorID string) (float64, int, error) {
+	var avg float64
+	var count int
+	err := r.db.QueryRow(ctx, `
+		SELECT rating_avg::float8, rating_count
+		FROM executor_profiles
+		WHERE user_id=$1 AND deleted_at IS NULL
+	`, executorID).Scan(&avg, &count)
+	if err != nil {
+		return 0, 0, err
+	}
+	return avg, count, nil
+}
+
+func (r *Repository) GetCreatorAnalytics(ctx context.Context, ownerID, role string, isAdmin bool) (CreatorAnalytics, error) {
+	where := "c.deleted_at IS NULL"
+	args := []any{}
+	if !isAdmin {
+		where += " AND (c.coach_id=$1 OR c.created_by=$1)"
+		args = append(args, ownerID)
+	}
+	var out CreatorAnalytics
+	if err := r.db.QueryRow(ctx, `
+		WITH scoped_courses AS (
+			SELECT c.*
+			FROM courses c
+			WHERE `+where+`
+		),
+		assignments AS (
+			SELECT ca.*, cp.progress_percent
+			FROM course_assignments ca
+			JOIN scoped_courses c ON c.id = ca.course_id
+			LEFT JOIN course_progress cp ON cp.assignment_id = ca.id
+		)
+		SELECT
+			COALESCE((SELECT COUNT(*)::int FROM scoped_courses), 0),
+			COALESCE((SELECT COUNT(*)::int FROM scoped_courses WHERE status='published'), 0),
+			COALESCE((SELECT COUNT(*)::int FROM scoped_courses WHERE status='draft'), 0),
+			COALESCE((SELECT COUNT(*)::int FROM scoped_courses WHERE status='archived'), 0),
+			COALESCE((SELECT COUNT(*)::int FROM course_materials cm JOIN scoped_courses c ON c.id=cm.course_id), 0),
+			COALESCE((SELECT COUNT(*)::int FROM assignments), 0),
+			COALESCE((SELECT COUNT(DISTINCT executor_id)::int FROM assignments WHERE status IN ('assigned','in_progress')), 0),
+			COALESCE((SELECT COUNT(*)::int FROM assignments WHERE status='completed'), 0),
+			COALESCE((SELECT ROUND(AVG(COALESCE(progress_percent, 0))::numeric, 2)::float8 FROM assignments), 0)
+	`, args...).Scan(
+		&out.TotalCourses,
+		&out.PublishedCourses,
+		&out.DraftCourses,
+		&out.ArchivedCourses,
+		&out.TotalMaterials,
+		&out.TotalAssignments,
+		&out.ActiveStudents,
+		&out.CompletedAssignments,
+		&out.AverageProgress,
+	); err != nil {
+		return CreatorAnalytics{}, err
+	}
+	return out, nil
+}
+
+func (r *Repository) ListCourseStudents(ctx context.Context, courseID, ownerID string, isAdmin bool, page, size int) ([]CourseStudent, int64, error) {
+	access := "c.id=$1 AND c.deleted_at IS NULL"
+	args := []any{courseID}
+	if !isAdmin {
+		access += " AND (c.coach_id=$2 OR c.created_by=$2)"
+		args = append(args, ownerID)
+	}
+	var total int64
+	if err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM course_assignments ca
+		JOIN courses c ON c.id=ca.course_id
+		WHERE `+access, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	args = append(args, size, (page-1)*size)
+	limitPos := len(args) - 1
+	offsetPos := len(args)
+	rows, err := r.db.Query(ctx, `
+		SELECT ca.id::text,
+		       ca.course_id::text,
+		       ca.executor_id::text,
+		       ep.display_name,
+		       u.email,
+		       ca.status::text,
+		       COALESCE(cp.progress_percent, 0),
+		       COALESCE(done.completed_materials, 0),
+		       COALESCE(total.total_materials, 0),
+		       ca.assigned_at,
+		       ca.due_at,
+		       ca.completed_at,
+		       cp.last_activity_at
+		FROM course_assignments ca
+		JOIN courses c ON c.id=ca.course_id
+		JOIN users u ON u.id=ca.executor_id
+		LEFT JOIN executor_profiles ep ON ep.user_id=ca.executor_id
+		LEFT JOIN course_progress cp ON cp.assignment_id=ca.id
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*)::int AS total_materials
+			FROM course_materials cm
+			WHERE cm.course_id=ca.course_id
+		) total ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT COUNT(cmp.material_id)::int AS completed_materials
+			FROM course_material_progress cmp
+			JOIN course_materials cm ON cm.id=cmp.material_id AND cm.course_id=ca.course_id
+			WHERE cmp.assignment_id=ca.id
+		) done ON TRUE
+		WHERE `+access+`
+		ORDER BY ca.assigned_at DESC
+		LIMIT $`+fmt.Sprintf("%d", limitPos)+` OFFSET $`+fmt.Sprintf("%d", offsetPos), args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	items := make([]CourseStudent, 0)
+	for rows.Next() {
+		var item CourseStudent
+		if err := rows.Scan(&item.AssignmentID, &item.CourseID, &item.ExecutorID, &item.ExecutorName, &item.ExecutorEmail, &item.Status, &item.ProgressPercent, &item.CompletedMaterials, &item.TotalMaterials, &item.AssignedAt, &item.DueAt, &item.CompletedAt, &item.LastActivityAt); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
 func (r *Repository) ListAssignmentsAdmin(ctx context.Context, q ListAssignmentsQuery) ([]CourseAssignment, int64, error) {
 	where := []string{"1=1"}
 	args := []interface{}{}
@@ -286,7 +548,7 @@ func (r *Repository) ListAssignmentsAdmin(ctx context.Context, q ListAssignments
 	args = append(args, q.PageSize, (q.Page-1)*q.PageSize)
 	rows, err := r.db.Query(ctx, `
 		SELECT ca.id, ca.course_id, ca.executor_id, ca.sanction_id, ca.assigned_by, ca.reason, ca.source, ca.status, ca.assigned_at, ca.due_at, ca.completed_at, ca.created_at, ca.updated_at,
-		       c.id, c.coach_id, c.created_by, c.title, c.description, c.status, c.created_at, c.updated_at, c.deleted_at
+		       `+courseColumns("c")+`
 		FROM course_assignments ca
 		JOIN courses c ON c.id = ca.course_id
 		WHERE `+whereSQL+`
@@ -317,7 +579,7 @@ func (r *Repository) ListAssignmentsMy(ctx context.Context, executorID string, o
 	}
 	rows, err := r.db.Query(ctx, `
 		SELECT ca.id, ca.course_id, ca.executor_id, ca.sanction_id, ca.assigned_by, ca.reason, ca.source, ca.status, ca.assigned_at, ca.due_at, ca.completed_at, ca.created_at, ca.updated_at,
-		       c.id, c.coach_id, c.created_by, c.title, c.description, c.status, c.created_at, c.updated_at, c.deleted_at
+		       `+courseColumns("c")+`
 		FROM course_assignments ca
 		JOIN courses c ON c.id = ca.course_id
 		WHERE `+where+`
@@ -341,7 +603,7 @@ func (r *Repository) ListAssignmentsMy(ctx context.Context, executorID string, o
 func (r *Repository) GetMyAssignmentByID(ctx context.Context, id, executorID string) (CourseAssignment, error) {
 	row := r.db.QueryRow(ctx, `
 		SELECT ca.id, ca.course_id, ca.executor_id, ca.sanction_id, ca.assigned_by, ca.reason, ca.source, ca.status, ca.assigned_at, ca.due_at, ca.completed_at, ca.created_at, ca.updated_at,
-		       c.id, c.coach_id, c.created_by, c.title, c.description, c.status, c.created_at, c.updated_at, c.deleted_at
+		       `+courseColumns("c")+`
 		FROM course_assignments ca
 		JOIN courses c ON c.id = ca.course_id
 		WHERE ca.id=$1 AND ca.executor_id=$2 AND c.status='published' AND c.deleted_at IS NULL
@@ -453,7 +715,7 @@ func (r *Repository) MarkMaterialCompleted(ctx context.Context, assignmentID, ma
 func lockMyAssignmentTx(ctx context.Context, tx pgx.Tx, id, executorID string) (CourseAssignment, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT ca.id, ca.course_id, ca.executor_id, ca.sanction_id, ca.assigned_by, ca.reason, ca.source, ca.status, ca.assigned_at, ca.due_at, ca.completed_at, ca.created_at, ca.updated_at,
-		       c.id, c.coach_id, c.created_by, c.title, c.description, c.status, c.created_at, c.updated_at, c.deleted_at
+		       `+courseColumns("c")+`
 		FROM course_assignments ca
 		JOIN courses c ON c.id = ca.course_id
 		WHERE ca.id=$1 AND ca.executor_id=$2 AND c.status='published' AND c.deleted_at IS NULL
@@ -465,7 +727,7 @@ func lockMyAssignmentTx(ctx context.Context, tx pgx.Tx, id, executorID string) (
 func getAssignmentWithCourseTx(ctx context.Context, tx pgx.Tx, id string) (CourseAssignment, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT ca.id, ca.course_id, ca.executor_id, ca.sanction_id, ca.assigned_by, ca.reason, ca.source, ca.status, ca.assigned_at, ca.due_at, ca.completed_at, ca.created_at, ca.updated_at,
-		       c.id, c.coach_id, c.created_by, c.title, c.description, c.status, c.created_at, c.updated_at, c.deleted_at
+		       `+courseColumns("c")+`
 		FROM course_assignments ca
 		JOIN courses c ON c.id = ca.course_id
 		WHERE ca.id=$1
@@ -659,14 +921,29 @@ func splitCSV(value string) []string {
 	return strings.Split(value, ",")
 }
 
+func nullableStringSlice(values []string) any {
+	if values == nil {
+		return nil
+	}
+	return values
+}
+
+func nonNilMap(value map[string]any) map[string]any {
+	if value == nil {
+		return map[string]any{}
+	}
+	return value
+}
+
 func scanAssignmentsWithCourse(rows pgx.Rows) ([]CourseAssignment, error) {
 	items := make([]CourseAssignment, 0)
 	for rows.Next() {
 		var a CourseAssignment
 		var c Course
 		a.Course = &c
-		if err := rows.Scan(&a.ID, &a.CourseID, &a.ExecutorID, &a.SanctionID, &a.AssignedBy, &a.Reason, &a.Source, &a.Status, &a.AssignedAt, &a.DueAt, &a.CompletedAt, &a.CreatedAt, &a.UpdatedAt,
-			&c.ID, &c.CoachID, &c.CreatedBy, &c.Title, &c.Description, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.DeletedAt); err != nil {
+		dest := []any{&a.ID, &a.CourseID, &a.ExecutorID, &a.SanctionID, &a.AssignedBy, &a.Reason, &a.Source, &a.Status, &a.AssignedAt, &a.DueAt, &a.CompletedAt, &a.CreatedAt, &a.UpdatedAt}
+		dest = append(dest, courseScanDest(&c)...)
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		items = append(items, a)
@@ -678,7 +955,8 @@ func scanAssignmentWithCourse(row pgx.Row) (CourseAssignment, error) {
 	var a CourseAssignment
 	var c Course
 	a.Course = &c
-	err := row.Scan(&a.ID, &a.CourseID, &a.ExecutorID, &a.SanctionID, &a.AssignedBy, &a.Reason, &a.Source, &a.Status, &a.AssignedAt, &a.DueAt, &a.CompletedAt, &a.CreatedAt, &a.UpdatedAt,
-		&c.ID, &c.CoachID, &c.CreatedBy, &c.Title, &c.Description, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.DeletedAt)
+	dest := []any{&a.ID, &a.CourseID, &a.ExecutorID, &a.SanctionID, &a.AssignedBy, &a.Reason, &a.Source, &a.Status, &a.AssignedAt, &a.DueAt, &a.CompletedAt, &a.CreatedAt, &a.UpdatedAt}
+	dest = append(dest, courseScanDest(&c)...)
+	err := row.Scan(dest...)
 	return a, err
 }

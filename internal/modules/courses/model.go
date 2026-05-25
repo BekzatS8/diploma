@@ -3,28 +3,52 @@ package courses
 import "time"
 
 type Course struct {
-	ID          string     `json:"id"`
-	CoachID     *string    `json:"coach_id,omitempty"`
-	CreatedBy   *string    `json:"created_by,omitempty"`
-	Title       string     `json:"title"`
-	Description *string    `json:"description,omitempty"`
-	Status      string     `json:"status"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	ID                 string     `json:"id"`
+	CoachID            *string    `json:"coach_id,omitempty"`
+	CreatedBy          *string    `json:"created_by,omitempty"`
+	Title              string     `json:"title"`
+	Subtitle           *string    `json:"subtitle,omitempty"`
+	Description        *string    `json:"description,omitempty"`
+	Slug               *string    `json:"slug,omitempty"`
+	Category           *string    `json:"category,omitempty"`
+	Level              string     `json:"level"`
+	Language           string     `json:"language"`
+	Price              float64    `json:"price"`
+	Currency           string     `json:"currency"`
+	DurationMinutes    int        `json:"duration_minutes"`
+	CoverUploadID      *string    `json:"cover_upload_id,omitempty"`
+	CoverURL           *string    `json:"cover_url,omitempty"`
+	Tags               []string   `json:"tags"`
+	LearningOutcomes   []string   `json:"learning_outcomes"`
+	Requirements       []string   `json:"requirements"`
+	CertificateEnabled bool       `json:"certificate_enabled"`
+	Status             string     `json:"status"`
+	ModerationStatus   string     `json:"moderation_status"`
+	EnrollmentCount    int        `json:"enrollment_count"`
+	RatingAvg          float64    `json:"rating_avg"`
+	RatingCount        int        `json:"rating_count"`
+	PublishedAt        *time.Time `json:"published_at,omitempty"`
+	ArchivedAt         *time.Time `json:"archived_at,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	DeletedAt          *time.Time `json:"deleted_at,omitempty"`
 }
 
 type CourseMaterial struct {
-	ID           string     `json:"id"`
-	CourseID     string     `json:"course_id"`
-	MaterialType string     `json:"type"`
-	Title        string     `json:"title"`
-	UploadID     *string    `json:"upload_id,omitempty"`
-	URL          *string    `json:"url,omitempty"`
-	Content      *string    `json:"content,omitempty"`
-	SortOrder    int        `json:"position"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+	ID              string         `json:"id"`
+	CourseID        string         `json:"course_id"`
+	MaterialType    string         `json:"type"`
+	Title           string         `json:"title"`
+	Description     *string        `json:"description,omitempty"`
+	UploadID        *string        `json:"upload_id,omitempty"`
+	URL             *string        `json:"url,omitempty"`
+	Content         *string        `json:"content,omitempty"`
+	SortOrder       int            `json:"position"`
+	DurationSeconds int            `json:"duration_seconds"`
+	IsPreview       bool           `json:"is_preview"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       *time.Time     `json:"updated_at,omitempty"`
 }
 
 type CourseAssignment struct {

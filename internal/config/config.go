@@ -19,6 +19,7 @@ type Config struct {
 	Metrics   MetricsConfig
 	Dev       DevConfig
 	Sanctions SanctionsConfig
+	Courses   CoursesConfig
 	Bootstrap BootstrapConfig
 }
 
@@ -68,10 +69,13 @@ type StorageConfig struct {
 }
 
 type PaymentsConfig struct {
-	Provider    string
-	CallbackURL string
-	PublicKey   string
-	SecretKey   string
+	Provider          string
+	CallbackURL       string
+	PublicKey         string
+	SecretKey         string
+	YooKassaShopID    string
+	YooKassaSecretKey string
+	YooKassaReturnURL string
 }
 
 type OrdersConfig struct {
@@ -99,6 +103,11 @@ type DevConfig struct {
 type SanctionsConfig struct {
 	AutoAssignCourseOnLowRating bool
 	DefaultLowRatingCourseID    string
+}
+
+type CoursesConfig struct {
+	ExecutorCreatorMinRating  float64
+	ExecutorCreatorMinReviews int
 }
 
 func Load() (Config, error) {
@@ -144,10 +153,13 @@ func Load() (Config, error) {
 			PublicBaseURL: getEnv("STORAGE_PUBLIC_BASE_URL", "/uploads"),
 		},
 		Payments: PaymentsConfig{
-			Provider:    getEnv("PAYMENTS_PROVIDER", "mock"),
-			CallbackURL: getEnv("PAYMENTS_CALLBACK_URL", ""),
-			PublicKey:   getEnv("PAYMENTS_PUBLIC_KEY", ""),
-			SecretKey:   getEnv("PAYMENTS_SECRET_KEY", ""),
+			Provider:          strings.ToLower(getEnv("PAYMENTS_PROVIDER", "mock")),
+			CallbackURL:       getEnv("PAYMENTS_CALLBACK_URL", ""),
+			PublicKey:         getEnv("PAYMENTS_PUBLIC_KEY", ""),
+			SecretKey:         getEnv("PAYMENTS_SECRET_KEY", ""),
+			YooKassaShopID:    os.Getenv("YOOKASSA_SHOP_ID"),
+			YooKassaSecretKey: os.Getenv("YOOKASSA_SECRET_KEY"),
+			YooKassaReturnURL: getEnv("YOOKASSA_RETURN_URL", "http://localhost:3000/client/dashboard"),
 		},
 		Orders: OrdersConfig{
 			PostingFee:            getEnvAsFloat("ORDER_POSTING_FEE", 1000),
@@ -165,6 +177,10 @@ func Load() (Config, error) {
 		Sanctions: SanctionsConfig{
 			AutoAssignCourseOnLowRating: getEnvAsBool("AUTO_ASSIGN_COURSE_ON_LOW_RATING", false),
 			DefaultLowRatingCourseID:    strings.TrimSpace(getEnv("DEFAULT_LOW_RATING_COURSE_ID", "")),
+		},
+		Courses: CoursesConfig{
+			ExecutorCreatorMinRating:  getEnvAsFloat("COURSES_EXECUTOR_CREATOR_MIN_RATING", 4.5),
+			ExecutorCreatorMinReviews: getEnvAsInt("COURSES_EXECUTOR_CREATOR_MIN_REVIEWS", 3),
 		},
 		Bootstrap: BootstrapConfig{
 			EnableAdmin:   getEnvAsBool("BOOTSTRAP_ADMIN_ENABLED", false),
@@ -185,6 +201,18 @@ func Load() (Config, error) {
 	}
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
+	}
+
+	if cfg.Payments.Provider == "yookassa" {
+		if cfg.Payments.YooKassaShopID == "" {
+			missing = append(missing, "YOOKASSA_SHOP_ID")
+		}
+		if cfg.Payments.YooKassaSecretKey == "" {
+			missing = append(missing, "YOOKASSA_SECRET_KEY")
+		}
+		if len(missing) > 0 {
+			return Config{}, fmt.Errorf("missing required YooKassa environment variables: %s", strings.Join(missing, ", "))
+		}
 	}
 
 	if cfg.Bootstrap.EnableAdmin {
