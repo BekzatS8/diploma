@@ -20,9 +20,6 @@ const (
 	demoCoachID    = "00000000-0000-0000-0000-000000000103"
 	demoAdminID    = "00000000-0000-0000-0000-000000000104"
 
-	categoryTaxID   = 90001
-	categoryAuditID = 90002
-
 	courseID      = "00000000-0000-0000-0000-000000000201"
 	assignmentID  = "00000000-0000-0000-0000-000000000202"
 	draftOrderID  = "00000000-0000-0000-0000-000000000301"
@@ -32,6 +29,11 @@ const (
 	submittedResponseID = "00000000-0000-0000-0000-000000000402"
 
 	sanctionID = "00000000-0000-0000-0000-000000000501"
+)
+
+var (
+	categoryTaxID   int64
+	categoryAuditID int64
 )
 
 func main() {
@@ -151,10 +153,22 @@ func upsertProfiles(ctx context.Context, tx pgx.Tx) error {
 }
 
 func upsertCategories(ctx context.Context, tx pgx.Tx) error {
-	if _, err := tx.Exec(ctx, `INSERT INTO categories(id, slug, name, is_active) VALUES($1,'tax','Tax Services',TRUE) ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name, is_active=TRUE`, categoryTaxID); err != nil {
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO categories(slug, name, is_active)
+		VALUES('tax','Tax Services',TRUE)
+		ON CONFLICT (slug) DO UPDATE
+		SET name=EXCLUDED.name, is_active=TRUE
+		RETURNING id
+	`).Scan(&categoryTaxID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO categories(id, slug, name, is_active) VALUES($1,'audit','Audit',TRUE) ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name, is_active=TRUE`, categoryAuditID); err != nil {
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO categories(slug, name, is_active)
+		VALUES('audit','Audit',TRUE)
+		ON CONFLICT (slug) DO UPDATE
+		SET name=EXCLUDED.name, is_active=TRUE
+		RETURNING id
+	`).Scan(&categoryAuditID); err != nil {
 		return err
 	}
 	return nil
@@ -162,10 +176,21 @@ func upsertCategories(ctx context.Context, tx pgx.Tx) error {
 
 func upsertCourse(ctx context.Context, tx pgx.Tx) error {
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO courses(id, coach_id, category_id, title, description, is_published)
-		VALUES($1,$2,$3,'Demo Tax Compliance 101','Published demo course for sanctions follow-up',TRUE)
+		INSERT INTO courses(id, coach_id, created_by, category_id, title, description, slug, category, is_published, status, published_at)
+		VALUES($1,$2,$2,$3,'Demo Tax Compliance 101','Published demo course for sanctions follow-up','demo-tax-compliance-101','tax',TRUE,'published',NOW())
 		ON CONFLICT (id) DO UPDATE
-		SET title=EXCLUDED.title, description=EXCLUDED.description, is_published=TRUE, updated_at=NOW(), deleted_at=NULL
+		SET coach_id=EXCLUDED.coach_id,
+			created_by=EXCLUDED.created_by,
+			category_id=EXCLUDED.category_id,
+			title=EXCLUDED.title,
+			description=EXCLUDED.description,
+			slug=EXCLUDED.slug,
+			category=EXCLUDED.category,
+			is_published=TRUE,
+			status='published',
+			published_at=COALESCE(courses.published_at, NOW()),
+			updated_at=NOW(),
+			deleted_at=NULL
 	`, courseID, demoCoachID, categoryTaxID); err != nil {
 		return err
 	}

@@ -153,7 +153,7 @@ func (r *Repository) CreateCourse(ctx context.Context, p CreateCourseParams) (Co
 		)
 		VALUES($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'draft','approved')
 		RETURNING `+courseColumns("")+`
-	`, p.CreatorID, p.Title, p.Subtitle, p.Description, p.Slug, p.Category, p.Level, p.Language, p.Price, p.Currency, p.DurationMinutes, p.CoverUploadID, p.CoverURL, p.Tags, p.LearningOutcomes, p.Requirements, p.CertificateEnabled)
+	`, p.CreatorID, p.Title, p.Subtitle, p.Description, p.Slug, p.Category, p.Level, p.Language, p.Price, p.Currency, p.DurationMinutes, p.CoverUploadID, p.CoverURL, stringSliceOrEmpty(p.Tags), stringSliceOrEmpty(p.LearningOutcomes), stringSliceOrEmpty(p.Requirements), p.CertificateEnabled)
 	return scanCourse(row)
 }
 
@@ -924,6 +924,13 @@ func splitCSV(value string) []string {
 func nullableStringSlice(values []string) any {
 	if values == nil {
 		return nil
+	}
+	return values
+}
+
+func stringSliceOrEmpty(values []string) []string {
+	if values == nil {
+		return []string{}
 	}
 	return values
 }
