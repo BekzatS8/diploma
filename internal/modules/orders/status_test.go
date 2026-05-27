@@ -5,6 +5,7 @@ import "testing"
 func TestOrderStatusTransitions(t *testing.T) {
 	allowed := [][2]string{
 		{StatusDraft, StatusPaymentPending},
+		{StatusDraft, StatusPublished},
 		{StatusDraft, StatusCancelled},
 		{StatusPaymentPending, StatusPublished},
 		{StatusPaymentPending, StatusDraft},
@@ -21,7 +22,6 @@ func TestOrderStatusTransitions(t *testing.T) {
 	}
 
 	rejected := [][2]string{
-		{StatusDraft, StatusPublished},
 		{StatusPublished, StatusDraft},
 		{StatusInProgress, StatusCancelled},
 		{StatusCompleted, StatusCancelled},

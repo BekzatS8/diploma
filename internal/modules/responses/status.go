@@ -23,7 +23,7 @@ func IsKnownStatus(status string) bool {
 func CanTransition(from, to string) bool {
 	switch from {
 	case StatusDraft:
-		return to == StatusPaymentPending || to == StatusCancelled
+		return to == StatusPaymentPending || to == StatusSubmitted || to == StatusCancelled
 	case StatusPaymentPending:
 		return to == StatusSubmitted || to == StatusDraft || to == StatusCancelled
 	case StatusSubmitted:

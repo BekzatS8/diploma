@@ -259,6 +259,59 @@ func (r *Repository) GetClientOrderResponse(ctx context.Context, orderID, respon
 	return scanResponseWithOrder(row)
 }
 
+// SubmitFromDraft marks a draft response as submitted without external payment.
+func (r *Repository) SubmitFromDraft(ctx context.Context, orderID, responseID, executorID string) (Response, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Response{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var currentStatus, orderStatus string
+	if err := tx.QueryRow(ctx, `
+		SELECT r.status, o.status
+		FROM responses r JOIN orders o ON o.id=r.order_id
+		WHERE r.id=$1 AND r.order_id=$2 AND r.executor_id=$3 AND r.deleted_at IS NULL
+		FOR UPDATE
+	`, responseID, orderID, executorID).Scan(&currentStatus, &orderStatus); err != nil {
+		return Response{}, err
+	}
+	if orderStatus != "published" {
+		return Response{}, ErrInvalidStatus
+	}
+	switch currentStatus {
+	case StatusDraft, StatusPaymentPending:
+		if !CanTransition(currentStatus, StatusSubmitted) {
+			return Response{}, ErrInvalidStatus
+		}
+	default:
+		return Response{}, ErrInvalidStatus
+	}
+
+	row := tx.QueryRow(ctx, `
+		UPDATE responses
+		SET status='submitted', is_paid=TRUE, paid_at=NOW(), updated_at=NOW()
+		WHERE id=$1
+		RETURNING id, order_id, executor_id, cover_letter, proposed_amount, currency, status, is_paid, paid_at, created_at, updated_at, deleted_at
+	`, responseID)
+	updated, err := scanResponse(row)
+	if err != nil {
+		return Response{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO response_status_history (response_id, old_status, new_status, changed_by, reason)
+		VALUES ($1,$2,'submitted',$3,$4)
+	`, responseID, currentStatus, executorID, "response submitted"); err != nil {
+		return Response{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Response{}, err
+	}
+	return updated, nil
+}
+
 func (r *Repository) SubmitWithPayment(ctx context.Context, orderID, responseID, executorID string, amount float64, currency, provider, providerRef, checkoutURL string) (Response, PaymentTransaction, error) {
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

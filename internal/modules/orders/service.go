@@ -200,7 +200,7 @@ func (s *Service) submit(ctx context.Context, userID, role, id string, expectedA
 		}
 		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, err
 	}
-	if order.Status != StatusDraft {
+	if order.Status != StatusDraft && order.Status != StatusPaymentPending {
 		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrInvalidStatusTransition
 	}
 	if strings.TrimSpace(order.Title) == "" || strings.TrimSpace(order.Description) == "" || order.BudgetAmount <= 0 || order.CategoryID == nil {
@@ -210,23 +210,15 @@ func (s *Service) submit(ctx context.Context, userID, role, id string, expectedA
 	promotionFee := promotionFee(order.PromotionOptions)
 	escrowAmount := order.BudgetAmount
 	totalCharge := s.postingFee + promotionFee + escrowAmount
-	totalCents := amountToCents(totalCharge)
-	if expectedAmount != nil && amountToCents(*expectedAmount) != totalCents {
-		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrInvalidInput
-	}
-	charge, err := s.paymentProvider.CreateCharge(ctx, payments.ChargeRequest{OrderID: order.ID, AmountCents: totalCents, CurrencyCode: s.defaultCurrency, Description: "Order posting fee"})
-	if err != nil {
-		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, err
-	}
 
-	updated, tx, err := s.repo.SubmitWithPayment(ctx, id, userID, s.postingFee, promotionFee, escrowAmount, totalCharge, s.defaultCurrency, s.paymentProviderName, charge.TransactionID, charge.RedirectURL)
+	updated, err := s.repo.PublishFromDraft(ctx, id, userID, s.postingFee, promotionFee, escrowAmount, totalCharge)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrOrderNotFound
 		}
 		return Order{}, PaymentTransaction{}, payments.ChargeResponse{}, err
 	}
-	return updated, tx, charge, nil
+	return updated, PaymentTransaction{}, payments.ChargeResponse{Status: "succeeded"}, nil
 }
 
 func amountToCents(value float64) int64 {

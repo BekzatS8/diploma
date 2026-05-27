@@ -99,7 +99,7 @@ func (s *Service) UpdateDraft(ctx context.Context, orderID, responseID, userID, 
 		}
 		return Response{}, err
 	}
-	if current.Status != StatusDraft {
+	if current.Status != StatusDraft && current.Status != StatusPaymentPending {
 		return Response{}, ErrInvalidStatus
 	}
 	if req.ProposedAmount != nil && *req.ProposedAmount <= 0 {
@@ -146,18 +146,17 @@ func (s *Service) Submit(ctx context.Context, orderID, responseID, userID, role 
 		}
 		return Response{}, PaymentTransaction{}, payments.ChargeResponse{}, err
 	}
-	if current.Status != StatusDraft || current.OrderStatus != "published" {
+	if current.OrderStatus != "published" {
+		return Response{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrInvalidStatus
+	}
+	if current.Status != StatusDraft && current.Status != StatusPaymentPending {
 		return Response{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrInvalidStatus
 	}
 	if current.CoverLetter == nil || strings.TrimSpace(*current.CoverLetter) == "" {
 		return Response{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrInvalidInput
 	}
 
-	charge, err := s.paymentProvider.CreateCharge(ctx, payments.ChargeRequest{OrderID: current.ID, AmountCents: int64(s.submissionFee * 100), CurrencyCode: s.defaultCurrency, Description: "Response submission fee"})
-	if err != nil {
-		return Response{}, PaymentTransaction{}, payments.ChargeResponse{}, err
-	}
-	updated, pay, err := s.repo.SubmitWithPayment(ctx, orderID, responseID, userID, s.submissionFee, s.defaultCurrency, s.paymentProviderName, charge.TransactionID, charge.RedirectURL)
+	updated, err := s.repo.SubmitFromDraft(ctx, orderID, responseID, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Response{}, PaymentTransaction{}, payments.ChargeResponse{}, ErrNotFound
@@ -165,7 +164,7 @@ func (s *Service) Submit(ctx context.Context, orderID, responseID, userID, role 
 		return Response{}, PaymentTransaction{}, payments.ChargeResponse{}, err
 	}
 	updated.OrderTitle = current.OrderTitle
-	return updated, pay, charge, nil
+	return updated, PaymentTransaction{}, payments.ChargeResponse{Status: "succeeded"}, nil
 }
 
 func (s *Service) Cancel(ctx context.Context, orderID, responseID, userID, role string) (Response, error) {

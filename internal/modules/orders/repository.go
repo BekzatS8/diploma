@@ -272,6 +272,73 @@ func (r *Repository) LatestPaymentByOrderID(ctx context.Context, orderID string)
 	return &t, nil
 }
 
+// PublishFromDraft publishes a draft order without an external payment step.
+func (r *Repository) PublishFromDraft(ctx context.Context, orderID, clientID string, postingFee, promotionFee, escrowAmount, totalCharge float64) (Order, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Order{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var currentStatus string
+	var selectedExecutorID *string
+	if err := tx.QueryRow(ctx, `
+		SELECT status, selected_executor_id
+		FROM orders
+		WHERE id = $1 AND client_id = $2 AND deleted_at IS NULL
+		FOR UPDATE
+	`, orderID, clientID).Scan(&currentStatus, &selectedExecutorID); err != nil {
+		return Order{}, err
+	}
+	if selectedExecutorID != nil {
+		return Order{}, ErrInvalidStatusTransition
+	}
+	switch currentStatus {
+	case StatusDraft, StatusPaymentPending:
+		if !CanTransition(currentStatus, StatusPublished) {
+			return Order{}, ErrInvalidStatusTransition
+		}
+	default:
+		return Order{}, ErrInvalidStatusTransition
+	}
+
+	row := tx.QueryRow(ctx, `
+		UPDATE orders
+		SET status = 'published',
+		    published_at = NOW(),
+		    posting_fee = $2,
+		    promotion_fee = $3,
+		    escrow_amount = $4,
+		    total_charge = $5,
+		    payment_status = 'paid',
+		    promoted_until = CASE WHEN promotion_options ? 'top' THEN NOW() + INTERVAL '72 hours' ELSE promoted_until END,
+		    pinned_until = CASE WHEN promotion_options ? 'pin' THEN NOW() + INTERVAL '30 days' ELSE pinned_until END,
+		    highlighted_until = CASE WHEN promotion_options ? 'highlight' THEN NOW() + INTERVAL '30 days' ELSE highlighted_until END,
+		    updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, client_id, category_id, title, description, budget_amount, currency,
+		       deadline_at, region, promotion_options, posting_fee, promotion_fee, escrow_amount, total_charge, payment_status,
+		       promoted_until, pinned_until, highlighted_until, executor_paid_at,
+		       status, selected_executor_id, published_at, completed_at, cancelled_at, created_at, updated_at, deleted_at
+	`, orderID, postingFee, promotionFee, escrowAmount, totalCharge)
+	updated, err := scanOrder(row)
+	if err != nil {
+		return Order{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO order_status_history (order_id, old_status, new_status, changed_by, reason)
+		VALUES ($1, $2, 'published', $3, $4)
+	`, orderID, currentStatus, clientID, "order published"); err != nil {
+		return Order{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Order{}, err
+	}
+	return updated, nil
+}
+
 func (r *Repository) SubmitWithPayment(ctx context.Context, orderID, clientID string, postingFee, promotionFee, escrowAmount, totalCharge float64, currency, provider, providerRef, checkoutURL string) (Order, PaymentTransaction, error) {
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
