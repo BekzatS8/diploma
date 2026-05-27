@@ -411,7 +411,7 @@ func (r *Repository) GetCourseOwner(ctx context.Context, courseID string) (strin
 		SELECT COALESCE(created_by, coach_id)::text
 		FROM courses
 		WHERE id=$1 AND deleted_at IS NULL
-	`).Scan(&ownerID)
+	`, courseID).Scan(&ownerID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return "", false, nil

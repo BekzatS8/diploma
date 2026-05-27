@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -151,7 +152,7 @@ func (r *Repository) CreateCourse(ctx context.Context, p CreateCourseParams) (Co
 			price, currency, duration_minutes, cover_upload_id, cover_url, tags, learning_outcomes,
 			requirements, certificate_enabled, status, moderation_status
 		)
-		VALUES($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'draft','approved')
+		VALUES($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'draft','draft')
 		RETURNING `+courseColumns("")+`
 	`, p.CreatorID, p.Title, p.Subtitle, p.Description, p.Slug, p.Category, p.Level, p.Language, p.Price, p.Currency, p.DurationMinutes, p.CoverUploadID, p.CoverURL, stringSliceOrEmpty(p.Tags), stringSliceOrEmpty(p.LearningOutcomes), stringSliceOrEmpty(p.Requirements), p.CertificateEnabled)
 	return scanCourse(row)
@@ -211,6 +212,11 @@ func (r *Repository) ListCourses(ctx context.Context, role, userID string, q Lis
 		args = append(args, "%"+q.Search+"%")
 		argPos++
 	}
+	if q.ModerationStatus != "" {
+		where = append(where, fmt.Sprintf("moderation_status=$%d", argPos))
+		args = append(args, q.ModerationStatus)
+		argPos++
+	}
 	if role == "coach" {
 		where = append(where, fmt.Sprintf("(coach_id=$%d OR created_by=$%d)", argPos, argPos))
 		args = append(args, userID)
@@ -221,6 +227,7 @@ func (r *Repository) ListCourses(ctx context.Context, role, userID string, q Lis
 		if q.Status == "" {
 			where = append(where, "status='published'")
 		}
+		where = append(where, "moderation_status='approved'")
 	}
 	whereSQL := strings.Join(where, " AND ")
 	var total int64
@@ -242,6 +249,95 @@ func (r *Repository) ListCourses(ctx context.Context, role, userID string, q Lis
 		items = append(items, c)
 	}
 	return items, total, rows.Err()
+}
+
+func (r *Repository) SubmitCourseForModeration(ctx context.Context, id, actorID string, isAdmin bool) (Course, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Course{}, err
+	}
+	defer tx.Rollback(ctx)
+	row := tx.QueryRow(ctx, `SELECT `+courseColumns("")+` FROM courses WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, id)
+	c, err := scanCourse(row)
+	if err != nil {
+		return Course{}, err
+	}
+	if c.Status != "draft" {
+		return Course{}, pgx.ErrNoRows
+	}
+	if c.ModerationStatus == "in_review" {
+		return c, nil
+	}
+	if c.ModerationStatus != "draft" && c.ModerationStatus != "rejected" {
+		return Course{}, pgx.ErrNoRows
+	}
+	if !isAdmin {
+		if (c.CoachID == nil || *c.CoachID != actorID) && (c.CreatedBy == nil || *c.CreatedBy != actorID) {
+			return Course{}, pgx.ErrNoRows
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE courses
+		SET moderation_status='in_review', updated_at=NOW()
+		WHERE id=$1
+	`, id); err != nil {
+		return Course{}, err
+	}
+	c, err = scanCourse(tx.QueryRow(ctx, `SELECT `+courseColumns("")+` FROM courses WHERE id=$1`, id))
+	if err != nil {
+		return Course{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Course{}, err
+	}
+	return c, nil
+}
+
+func (r *Repository) ApproveCourseModeration(ctx context.Context, id string) (Course, error) {
+	row := r.db.QueryRow(ctx, `
+		UPDATE courses
+		SET status='published',
+		    moderation_status='approved',
+		    is_published=TRUE,
+		    published_at=COALESCE(published_at, NOW()),
+		    updated_at=NOW()
+		WHERE id=$1
+		  AND deleted_at IS NULL
+		  AND moderation_status='in_review'
+		RETURNING `+courseColumns(""),
+		id,
+	)
+	return scanCourse(row)
+}
+
+func (r *Repository) RejectCourseModeration(ctx context.Context, id string, reason *string) (Course, error) {
+	row := r.db.QueryRow(ctx, `
+		UPDATE courses
+		SET moderation_status='rejected',
+		    status='draft',
+		    is_published=FALSE,
+		    updated_at=NOW()
+		WHERE id=$1
+		  AND deleted_at IS NULL
+		  AND moderation_status='in_review'
+		RETURNING `+courseColumns(""),
+		id,
+	)
+	c, err := scanCourse(row)
+	if err != nil {
+		return Course{}, err
+	}
+	if reason != nil && strings.TrimSpace(*reason) != "" {
+		_, _ = r.db.Exec(ctx, `
+			UPDATE courses
+			SET description=COALESCE(description, '') || E'\n\n[Отклонено модератором]: ' || $2,
+			    updated_at=NOW()
+			WHERE id=$1
+		`, id, strings.TrimSpace(*reason))
+		row = r.db.QueryRow(ctx, `SELECT `+courseColumns("")+` FROM courses WHERE id=$1`, id)
+		return scanCourse(row)
+	}
+	return c, nil
 }
 
 func (r *Repository) TransitionCourseStatus(ctx context.Context, id, actorID, from, to string, isAdmin bool) (Course, error) {
@@ -268,6 +364,7 @@ func (r *Repository) TransitionCourseStatus(ctx context.Context, id, actorID, fr
 		UPDATE courses
 		SET status=$2,
 			is_published=($2='published'),
+			moderation_status=CASE WHEN $2='published' THEN 'approved' ELSE moderation_status END,
 			published_at=CASE WHEN $2='published' THEN COALESCE(published_at, NOW()) ELSE published_at END,
 			archived_at=CASE WHEN $2='archived' THEN COALESCE(archived_at, NOW()) ELSE archived_at END,
 			updated_at=NOW()
@@ -354,39 +451,60 @@ func (r *Repository) ListMaterialsByCourse(ctx context.Context, courseID string)
 	return items, rows.Err()
 }
 
-func (r *Repository) CreateAssignment(ctx context.Context, p CreateAssignmentParams) (CourseAssignment, error) {
+func (r *Repository) CreateAssignment(ctx context.Context, p CreateAssignmentParams) (CourseAssignment, bool, error) {
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return CourseAssignment{}, err
+		return CourseAssignment{}, false, err
 	}
 	defer tx.Rollback(ctx)
 	row := tx.QueryRow(ctx, `
 		INSERT INTO course_assignments(course_id, executor_id, sanction_id, assigned_by, reason, source, status, due_at)
 		VALUES($1,$2,$3,$4,$5,$6,'assigned',$7)
-		ON CONFLICT (course_id, executor_id) WHERE status IN ('assigned','in_progress') DO NOTHING
+		ON CONFLICT (course_id, executor_id) WHERE status <> 'cancelled' DO NOTHING
 		RETURNING id, course_id, executor_id, sanction_id, assigned_by, reason, source, status, assigned_at, due_at, completed_at, created_at, updated_at
 	`, p.CourseID, p.ExecutorID, p.SanctionID, p.AssignedBy, p.Reason, p.Source, p.DueAt)
 	var a CourseAssignment
 	if err := row.Scan(&a.ID, &a.CourseID, &a.ExecutorID, &a.SanctionID, &a.AssignedBy, &a.Reason, &a.Source, &a.Status, &a.AssignedAt, &a.DueAt, &a.CompletedAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
-		return CourseAssignment{}, err
+		if errors.Is(err, pgx.ErrNoRows) {
+			existing, getErr := r.GetNonCancelledAssignmentByCourseAndExecutor(ctx, p.CourseID, p.ExecutorID)
+			return existing, false, getErr
+		}
+		return CourseAssignment{}, false, err
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO course_progress(assignment_id, executor_id, progress_percent, status)
 		VALUES($1,$2,0,'assigned')
 		ON CONFLICT (assignment_id) DO NOTHING
 	`, a.ID, a.ExecutorID); err != nil {
-		return CourseAssignment{}, err
+		return CourseAssignment{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return CourseAssignment{}, err
+		return CourseAssignment{}, false, err
 	}
 	a.Progress = &CourseProgress{AssignmentID: a.ID, ExecutorID: a.ExecutorID, ProgressPercent: 0, Status: "assigned"}
-	return a, nil
+	return a, true, nil
+}
+
+func (r *Repository) GetNonCancelledAssignmentByCourseAndExecutor(ctx context.Context, courseID, executorID string) (CourseAssignment, error) {
+	row := r.db.QueryRow(ctx, `
+		SELECT id, course_id, executor_id, sanction_id, assigned_by, reason, source, status, assigned_at, due_at, completed_at, created_at, updated_at
+		FROM course_assignments
+		WHERE course_id=$1 AND executor_id=$2 AND status <> 'cancelled'
+	`, courseID, executorID)
+	var a CourseAssignment
+	if err := row.Scan(&a.ID, &a.CourseID, &a.ExecutorID, &a.SanctionID, &a.AssignedBy, &a.Reason, &a.Source, &a.Status, &a.AssignedAt, &a.DueAt, &a.CompletedAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		return CourseAssignment{}, err
+	}
+	items := []CourseAssignment{a}
+	if err := r.attachProgress(ctx, items); err != nil {
+		return CourseAssignment{}, err
+	}
+	return items[0], nil
 }
 
 func (r *Repository) IsCoursePublished(ctx context.Context, courseID string) (bool, error) {
 	var exists bool
-	err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM courses WHERE id=$1 AND deleted_at IS NULL AND status='published')`, courseID).Scan(&exists)
+	err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM courses WHERE id=$1 AND deleted_at IS NULL AND status='published' AND moderation_status='approved')`, courseID).Scan(&exists)
 	return exists, err
 }
 
@@ -430,7 +548,7 @@ func (r *Repository) GetCreatorAnalytics(ctx context.Context, ownerID, role stri
 		)
 		SELECT
 			COALESCE((SELECT COUNT(*)::int FROM scoped_courses), 0),
-			COALESCE((SELECT COUNT(*)::int FROM scoped_courses WHERE status='published'), 0),
+			COALESCE((SELECT COUNT(*)::int FROM scoped_courses WHERE status='published' AND moderation_status='approved'), 0),
 			COALESCE((SELECT COUNT(*)::int FROM scoped_courses WHERE status='draft'), 0),
 			COALESCE((SELECT COUNT(*)::int FROM scoped_courses WHERE status='archived'), 0),
 			COALESCE((SELECT COUNT(*)::int FROM course_materials cm JOIN scoped_courses c ON c.id=cm.course_id), 0),
@@ -575,7 +693,7 @@ func (r *Repository) ListAssignmentsAdmin(ctx context.Context, q ListAssignments
 func (r *Repository) ListAssignmentsMy(ctx context.Context, executorID string, onlyPublished bool, page, size int) ([]CourseAssignment, int64, error) {
 	where := "ca.executor_id=$1"
 	if onlyPublished {
-		where += " AND c.status='published' AND c.deleted_at IS NULL"
+		where += " AND c.status='published' AND c.moderation_status='approved' AND c.deleted_at IS NULL"
 	}
 	var total int64
 	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM course_assignments ca JOIN courses c ON c.id=ca.course_id WHERE `+where, executorID).Scan(&total); err != nil {
@@ -610,7 +728,7 @@ func (r *Repository) GetMyAssignmentByID(ctx context.Context, id, executorID str
 		       `+courseColumns("c")+`
 		FROM course_assignments ca
 		JOIN courses c ON c.id = ca.course_id
-		WHERE ca.id=$1 AND ca.executor_id=$2 AND c.status='published' AND c.deleted_at IS NULL
+		WHERE ca.id=$1 AND ca.executor_id=$2 AND c.status='published' AND c.moderation_status='approved' AND c.deleted_at IS NULL
 	`, id, executorID)
 	item, err := scanAssignmentWithCourse(row)
 	if err != nil {
@@ -722,7 +840,7 @@ func lockMyAssignmentTx(ctx context.Context, tx pgx.Tx, id, executorID string) (
 		       `+courseColumns("c")+`
 		FROM course_assignments ca
 		JOIN courses c ON c.id = ca.course_id
-		WHERE ca.id=$1 AND ca.executor_id=$2 AND c.status='published' AND c.deleted_at IS NULL
+		WHERE ca.id=$1 AND ca.executor_id=$2 AND c.status='published' AND c.moderation_status='approved' AND c.deleted_at IS NULL
 		FOR UPDATE OF ca
 	`, id, executorID)
 	return scanAssignmentWithCourse(row)

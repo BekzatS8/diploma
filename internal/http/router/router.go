@@ -257,6 +257,12 @@ func New(deps Deps) *gin.Engine {
 		adminCourseAssignments.POST("", deps.CoursesHandler.CreateAssignment)
 		adminCourseAssignments.GET("", deps.CoursesHandler.ListAdminAssignments)
 
+		adminCourses := v1.Group("/admin/courses")
+		adminCourses.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
+		adminCourses.GET("", deps.CoursesHandler.ListAdminCourses)
+		adminCourses.POST("/:id/approve", deps.CoursesHandler.ApproveCourseModeration)
+		adminCourses.POST("/:id/reject", deps.CoursesHandler.RejectCourseModeration)
+
 		myCourseAssignments := v1.Group("/my/course-assignments")
 		myCourseAssignments.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor"))
 		myCourseAssignments.GET("", deps.CoursesHandler.ListMyAssignments)

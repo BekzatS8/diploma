@@ -45,7 +45,7 @@ type CreateMaterialRequest struct {
 	Description     *string        `json:"description" binding:"omitempty,max=1000"`
 	Type            string         `json:"type" binding:"required,oneof=video pdf link text"`
 	UploadID        *string        `json:"upload_id" binding:"omitempty,uuid"`
-	URL             *string        `json:"url" binding:"omitempty,url,max=2048"`
+	URL             *string        `json:"url" binding:"omitempty,max=2048"`
 	Content         *string        `json:"content" binding:"omitempty,max=20000"`
 	Position        *int           `json:"position" binding:"omitempty,gte=0"`
 	DurationSeconds *int           `json:"duration_seconds" binding:"omitempty,gte=0"`
@@ -58,7 +58,7 @@ type UpdateMaterialRequest struct {
 	Description     *string        `json:"description" binding:"omitempty,max=1000"`
 	Type            *string        `json:"type" binding:"omitempty,oneof=video pdf link text"`
 	UploadID        *string        `json:"upload_id" binding:"omitempty,uuid"`
-	URL             *string        `json:"url" binding:"omitempty,url,max=2048"`
+	URL             *string        `json:"url" binding:"omitempty,max=2048"`
 	Content         *string        `json:"content" binding:"omitempty,max=20000"`
 	Position        *int           `json:"position" binding:"omitempty,gte=0"`
 	DurationSeconds *int           `json:"duration_seconds" binding:"omitempty,gte=0"`
@@ -67,11 +67,16 @@ type UpdateMaterialRequest struct {
 }
 
 type ListCoursesQuery struct {
-	Status   string
-	Category string
-	Search   string
-	Page     int
-	PageSize int
+	Status           string
+	ModerationStatus string
+	Category         string
+	Search           string
+	Page             int
+	PageSize         int
+}
+
+type RejectCourseRequest struct {
+	Reason *string `json:"reason" binding:"omitempty,max=1000"`
 }
 
 type CourseDetailResponse struct {

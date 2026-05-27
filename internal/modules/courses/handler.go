@@ -205,11 +205,12 @@ func (h *Handler) ListCourses(c *gin.Context) {
 		return
 	}
 	q := ListCoursesQuery{
-		Status:   strings.TrimSpace(c.Query("status")),
-		Category: strings.TrimSpace(c.Query("category")),
-		Search:   strings.TrimSpace(c.Query("q")),
-		Page:     parseIntDefault(c.Query("page"), 1),
-		PageSize: parseIntDefault(c.Query("page_size"), 20),
+		Status:           strings.TrimSpace(c.Query("status")),
+		ModerationStatus: strings.TrimSpace(c.Query("moderation_status")),
+		Category:         strings.TrimSpace(c.Query("category")),
+		Search:           strings.TrimSpace(c.Query("q")),
+		Page:             parseIntDefault(c.Query("page"), 1),
+		PageSize:         parseIntDefault(c.Query("page_size"), 20),
 	}
 	items, total, err := h.service.ListCoursesForRole(c.Request.Context(), user.UserID, user.PrimaryRole(), q)
 	if err != nil {
@@ -217,6 +218,61 @@ func (h *Handler) ListCourses(c *gin.Context) {
 		return
 	}
 	response.JSON(c, http.StatusOK, response.ListEnvelope[Course]{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total})
+}
+
+func (h *Handler) ListAdminCourses(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	q := ListCoursesQuery{
+		Status:           strings.TrimSpace(c.Query("status")),
+		ModerationStatus: strings.TrimSpace(c.Query("moderation_status")),
+		Category:         strings.TrimSpace(c.Query("category")),
+		Search:           strings.TrimSpace(c.Query("q")),
+		Page:             parseIntDefault(c.Query("page"), 1),
+		PageSize:         parseIntDefault(c.Query("page_size"), 20),
+	}
+	items, total, err := h.service.ListAdminCourses(c.Request.Context(), user.PrimaryRole(), q)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, response.ListEnvelope[Course]{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total})
+}
+
+func (h *Handler) ApproveCourseModeration(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	item, err := h.service.ApproveCourseModeration(c.Request.Context(), c.Param("id"), user.PrimaryRole())
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, item)
+}
+
+func (h *Handler) RejectCourseModeration(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	var req RejectCourseRequest
+	if err := c.ShouldBindJSON(&req); err != nil && c.Request.ContentLength > 0 {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
+		return
+	}
+	item, err := h.service.RejectCourseModeration(c.Request.Context(), c.Param("id"), user.PrimaryRole(), req)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, item)
 }
 
 func (h *Handler) GetCourse(c *gin.Context) {
@@ -285,12 +341,16 @@ func (h *Handler) EnrollMyCourse(c *gin.Context) {
 		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
 		return
 	}
-	item, err := h.service.EnrollMyCourse(c.Request.Context(), user.UserID, user.PrimaryRole(), req.CourseID)
+	item, created, err := h.service.EnrollMyCourse(c.Request.Context(), user.UserID, user.PrimaryRole(), req.CourseID)
 	if err != nil {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusCreated, item)
+	if created {
+		response.JSON(c, http.StatusCreated, item)
+		return
+	}
+	response.JSON(c, http.StatusOK, item)
 }
 
 func (h *Handler) ListMyAssignments(c *gin.Context) {

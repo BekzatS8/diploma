@@ -128,7 +128,17 @@ func (s *Service) PublishCourse(ctx context.Context, id, userID, role string) (C
 	if !s.creatorRole(role) {
 		return Course{}, ErrForbidden
 	}
-	item, err := s.repo.TransitionCourseStatus(ctx, id, userID, "draft", "published", role == "admin")
+	if role == "admin" {
+		item, err := s.repo.TransitionCourseStatus(ctx, id, userID, "draft", "published", true)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Course{}, ErrConflict
+			}
+			return Course{}, err
+		}
+		return item, nil
+	}
+	item, err := s.repo.SubmitCourseForModeration(ctx, id, userID, false)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Course{}, ErrConflict
@@ -174,6 +184,18 @@ func (s *Service) AddMaterial(ctx context.Context, courseID, userID, role string
 	if err != nil {
 		return CourseMaterial{}, err
 	}
+	materialURL := normalizeNullable(req.URL)
+	if uploadID != nil && materialURL == nil && s.uploads != nil {
+		upload, uploadErr := s.uploads.GetByID(ctx, *uploadID)
+		if uploadErr != nil {
+			if errors.Is(uploadErr, uploads.ErrNotFound) {
+				return CourseMaterial{}, ErrNotFound
+			}
+			return CourseMaterial{}, uploadErr
+		}
+		resolved := s.uploads.URL(upload)
+		materialURL = &resolved
+	}
 	position := 0
 	if req.Position != nil {
 		if *req.Position < 0 {
@@ -189,7 +211,7 @@ func (s *Service) AddMaterial(ctx context.Context, courseID, userID, role string
 	if req.IsPreview != nil {
 		isPreview = *req.IsPreview
 	}
-	item, err := s.repo.CreateMaterial(ctx, CreateMaterialParams{CourseID: courseID, Title: title, Description: normalizeNullable(req.Description), MaterialType: mt, UploadID: uploadID, URL: normalizeNullable(req.URL), Content: normalizeNullable(req.Content), SortOrder: position, DurationSeconds: duration, IsPreview: isPreview, Metadata: req.Metadata})
+	item, err := s.repo.CreateMaterial(ctx, CreateMaterialParams{CourseID: courseID, Title: title, Description: normalizeNullable(req.Description), MaterialType: mt, UploadID: uploadID, URL: materialURL, Content: normalizeNullable(req.Content), SortOrder: position, DurationSeconds: duration, IsPreview: isPreview, Metadata: req.Metadata})
 	if err != nil {
 		return CourseMaterial{}, err
 	}
@@ -286,6 +308,47 @@ func (s *Service) ListCoursesForRole(ctx context.Context, userID, role string, q
 	return s.repo.ListCourses(ctx, role, userID, q)
 }
 
+func (s *Service) ListAdminCourses(ctx context.Context, role string, q ListCoursesQuery) ([]Course, int64, error) {
+	if role != "admin" {
+		return nil, 0, ErrForbidden
+	}
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.PageSize < 1 || q.PageSize > 100 {
+		q.PageSize = 20
+	}
+	return s.repo.ListCourses(ctx, "admin", "", q)
+}
+
+func (s *Service) ApproveCourseModeration(ctx context.Context, id, role string) (Course, error) {
+	if role != "admin" {
+		return Course{}, ErrForbidden
+	}
+	item, err := s.repo.ApproveCourseModeration(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Course{}, ErrNotFound
+		}
+		return Course{}, err
+	}
+	return item, nil
+}
+
+func (s *Service) RejectCourseModeration(ctx context.Context, id, role string, req RejectCourseRequest) (Course, error) {
+	if role != "admin" {
+		return Course{}, ErrForbidden
+	}
+	item, err := s.repo.RejectCourseModeration(ctx, id, normalizeNullable(req.Reason))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Course{}, ErrNotFound
+		}
+		return Course{}, err
+	}
+	return item, nil
+}
+
 func (s *Service) GetCourseCatalogByID(ctx context.Context, id, userID, role string) (Course, []CourseMaterial, error) {
 	if role != "executor" && role != "coach" && role != "admin" {
 		return Course{}, nil, ErrForbidden
@@ -297,7 +360,7 @@ func (s *Service) GetCourseCatalogByID(ctx context.Context, id, userID, role str
 		}
 		return Course{}, nil, err
 	}
-	if role == "executor" && item.Status != "published" {
+	if role == "executor" && (item.Status != "published" || item.ModerationStatus != "approved") {
 		return Course{}, nil, ErrNotFound
 	}
 	materials, err := s.repo.ListMaterialsByCourse(ctx, item.ID)
@@ -307,23 +370,23 @@ func (s *Service) GetCourseCatalogByID(ctx context.Context, id, userID, role str
 	return item, materials, nil
 }
 
-func (s *Service) EnrollMyCourse(ctx context.Context, userID, role, courseID string) (CourseAssignment, error) {
+func (s *Service) EnrollMyCourse(ctx context.Context, userID, role, courseID string) (CourseAssignment, bool, error) {
 	if role != "executor" {
-		return CourseAssignment{}, ErrForbidden
+		return CourseAssignment{}, false, ErrForbidden
 	}
 	courseID = strings.TrimSpace(courseID)
 	if courseID == "" {
-		return CourseAssignment{}, ErrInvalidInput
+		return CourseAssignment{}, false, ErrInvalidInput
 	}
 	exists, err := s.repo.IsCoursePublished(ctx, courseID)
 	if err != nil {
-		return CourseAssignment{}, err
+		return CourseAssignment{}, false, err
 	}
 	if !exists {
-		return CourseAssignment{}, ErrNotFound
+		return CourseAssignment{}, false, ErrNotFound
 	}
 	reason := "Самостоятельная запись на курс"
-	item, err := s.repo.CreateAssignment(ctx, CreateAssignmentParams{
+	item, created, err := s.repo.CreateAssignment(ctx, CreateAssignmentParams{
 		CourseID:   courseID,
 		ExecutorID: userID,
 		AssignedBy: userID,
@@ -331,19 +394,16 @@ func (s *Service) EnrollMyCourse(ctx context.Context, userID, role, courseID str
 		Source:     "self_enroll",
 	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return CourseAssignment{}, ErrConflict
-		}
-		return CourseAssignment{}, err
+		return CourseAssignment{}, false, err
 	}
-	if s.notifier != nil {
+	if created && s.notifier != nil {
 		_, _ = s.notifier.EmitInApp(ctx, userID, notifications.TypeCourseAssigned, map[string]any{
 			"course_id":            item.CourseID,
 			"course_assignment_id": item.ID,
 			"source":               "self_enroll",
 		})
 	}
-	return item, nil
+	return item, created, nil
 }
 
 func (s *Service) CreateAssignment(ctx context.Context, userID, role string, req CreateAssignmentRequest) (CourseAssignment, error) {
@@ -361,12 +421,12 @@ func (s *Service) CreateAssignment(ctx context.Context, userID, role string, req
 	if !exists {
 		return CourseAssignment{}, ErrInvalidInput
 	}
-	item, err := s.repo.CreateAssignment(ctx, CreateAssignmentParams{CourseID: req.CourseID, ExecutorID: req.ExecutorID, AssignedBy: userID, Reason: normalizeNullable(req.Reason), Source: source, DueAt: req.DueAt})
+	item, created, err := s.repo.CreateAssignment(ctx, CreateAssignmentParams{CourseID: req.CourseID, ExecutorID: req.ExecutorID, AssignedBy: userID, Reason: normalizeNullable(req.Reason), Source: source, DueAt: req.DueAt})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return CourseAssignment{}, ErrConflict
-		}
 		return CourseAssignment{}, err
+	}
+	if !created {
+		return CourseAssignment{}, ErrConflict
 	}
 	if s.notifier != nil {
 		_, _ = s.notifier.EmitInApp(ctx, req.ExecutorID, notifications.TypeCourseAssigned, map[string]any{
