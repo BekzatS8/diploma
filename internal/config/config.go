@@ -179,8 +179,8 @@ func Load() (Config, error) {
 			DefaultLowRatingCourseID:    strings.TrimSpace(getEnv("DEFAULT_LOW_RATING_COURSE_ID", "")),
 		},
 		Courses: CoursesConfig{
-			ExecutorCreatorMinRating:  getEnvAsFloat("COURSES_EXECUTOR_CREATOR_MIN_RATING", 4.5),
-			ExecutorCreatorMinReviews: getEnvAsInt("COURSES_EXECUTOR_CREATOR_MIN_REVIEWS", 3),
+			ExecutorCreatorMinRating:  getEnvAsFloat("COURSES_EXECUTOR_CREATOR_MIN_RATING", 5),
+			ExecutorCreatorMinReviews: getEnvAsInt("COURSES_EXECUTOR_CREATOR_MIN_REVIEWS", 5),
 		},
 		Bootstrap: BootstrapConfig{
 			EnableAdmin:   getEnvAsBool("BOOTSTRAP_ADMIN_ENABLED", false),

@@ -72,16 +72,26 @@ func (r *Repository) HasActiveLowRating(ctx context.Context, executorID string) 
 func (r *Repository) GetRating(ctx context.Context, executorID string) (RatingInfo, error) {
 	var info RatingInfo
 	info.ExecutorID = executorID
-	if err := r.db.QueryRow(ctx, `SELECT rating_count, rating_avg FROM executor_profiles WHERE user_id=$1`, executorID).Scan(&info.ReviewsCountTotal, &info.AvgRatingTotal); err != nil {
+	if err := r.db.QueryRow(ctx, `SELECT rating_count, COALESCE(rating_avg::float8, 5) FROM executor_profiles WHERE user_id=$1`, executorID).Scan(&info.ReviewsCountTotal, &info.AvgRatingTotal); err != nil {
 		return RatingInfo{}, err
 	}
+	if info.ReviewsCountTotal == 0 {
+		info.AvgRatingTotal = 5
+	}
 	if err := r.db.QueryRow(ctx, `
-		SELECT COUNT(*), COALESCE(AVG(rating)::float8, 0)
+		SELECT COUNT(*), COALESCE(AVG(rating)::float8, 5)
 		FROM (
-			SELECT rating FROM reviews WHERE executor_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10
+			SELECT rating
+			FROM reviews
+			WHERE reviewee_id=$1 AND reviewee_role='executor' AND deleted_at IS NULL
+			ORDER BY created_at DESC
+			LIMIT 10
 		) t
 	`, executorID).Scan(&info.ReviewsCountRecent, &info.AvgRatingRecent); err != nil {
 		return RatingInfo{}, err
+	}
+	if info.ReviewsCountRecent == 0 {
+		info.AvgRatingRecent = 5
 	}
 	return info, nil
 }
@@ -115,13 +125,19 @@ func (r *Repository) RecalculateAndApply(ctx context.Context, tx pgx.Tx, executo
 	result := RecalculateResult{}
 	var total int
 	var avgTotal float64
-	if err := tx.QueryRow(ctx, `SELECT COUNT(*), COALESCE(AVG(rating)::float8,0) FROM reviews WHERE executor_id=$1 AND deleted_at IS NULL`, executorID).Scan(&total, &avgTotal); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*), COALESCE(AVG(rating)::float8,5) FROM reviews WHERE reviewee_id=$1 AND reviewee_role='executor' AND deleted_at IS NULL`, executorID).Scan(&total, &avgTotal); err != nil {
 		return result, err
+	}
+	if total == 0 {
+		avgTotal = 5
 	}
 	var recentCount int
 	var avgRecent float64
-	if err := tx.QueryRow(ctx, `SELECT COUNT(*), COALESCE(AVG(rating)::float8,0) FROM (SELECT rating FROM reviews WHERE executor_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10) t`, executorID).Scan(&recentCount, &avgRecent); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*), COALESCE(AVG(rating)::float8,5) FROM (SELECT rating FROM reviews WHERE reviewee_id=$1 AND reviewee_role='executor' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10) t`, executorID).Scan(&recentCount, &avgRecent); err != nil {
 		return result, err
+	}
+	if recentCount == 0 {
+		avgRecent = 5
 	}
 
 	if _, err := tx.Exec(ctx, `UPDATE executor_profiles SET rating_avg=$2, rating_count=$3, updated_at=NOW() WHERE user_id=$1`, executorID, avgTotal, total); err != nil {

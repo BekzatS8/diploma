@@ -394,9 +394,13 @@ func (r *Repository) ExecutorRating(ctx context.Context, executorID string) (flo
 	var avg float64
 	var count int
 	err := r.db.QueryRow(ctx, `
-		SELECT rating_avg::float8, rating_count
-		FROM executor_profiles
-		WHERE user_id=$1 AND deleted_at IS NULL
+		SELECT COALESCE(AVG(rating)::float8, 5),
+		       COUNT(*) FILTER (WHERE rating=5)::int
+		FROM reviews
+		WHERE reviewee_id=$1
+		  AND reviewee_role='executor'
+		  AND direction='client_to_executor'
+		  AND deleted_at IS NULL
 	`, executorID).Scan(&avg, &count)
 	if err != nil {
 		return 0, 0, err

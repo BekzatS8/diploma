@@ -42,17 +42,19 @@ type ProfileDocument struct {
 }
 
 type ProfileStats struct {
-	Balance         float64 `json:"balance"`
-	Currency        string  `json:"currency"`
-	OrdersTotal     int64   `json:"orders_total"`
-	OrdersActive    int64   `json:"orders_active"`
-	OrdersCompleted int64   `json:"orders_completed"`
-	EarnedTotal     float64 `json:"earned_total"`
-	SpentTotal      float64 `json:"spent_total"`
-	RatingAvg       float64 `json:"rating_avg"`
-	RatingCount     int64   `json:"rating_count"`
-	ProfileViews    int64   `json:"profile_views"`
-	ResponseRate    int64   `json:"response_rate"`
+	Balance          float64 `json:"balance"`
+	Currency         string  `json:"currency"`
+	OrdersTotal      int64   `json:"orders_total"`
+	OrdersActive     int64   `json:"orders_active"`
+	OrdersCompleted  int64   `json:"orders_completed"`
+	EarnedTotal      float64 `json:"earned_total"`
+	SpentTotal       float64 `json:"spent_total"`
+	RatingAvg        float64 `json:"rating_avg"`
+	RatingCount      int64   `json:"rating_count"`
+	ProfileViews     int64   `json:"profile_views"`
+	ResponseRate     int64   `json:"response_rate"`
+	CoursesPublished int64   `json:"courses_published"`
+	CourseStudents   int64   `json:"course_students"`
 }
 
 type ProfileAchievement struct {

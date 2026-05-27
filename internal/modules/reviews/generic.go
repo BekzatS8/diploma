@@ -70,6 +70,21 @@ func (r *Repository) RecalculateEntityRatingTx(ctx context.Context, tx pgx.Tx, t
 		    rating_count=EXCLUDED.rating_count,
 		    updated_at=NOW()
 	`, targetType, targetID)
+	if err != nil {
+		return err
+	}
+	if targetType == "course" {
+		_, err = tx.Exec(ctx, `
+			UPDATE courses c
+			SET rating_avg=s.rating_avg,
+			    rating_count=s.rating_count,
+			    updated_at=NOW()
+			FROM entity_rating_summaries s
+			WHERE c.id=s.target_id
+			  AND s.target_type='course'
+			  AND c.id=$1::uuid
+		`, targetID)
+	}
 	return err
 }
 
@@ -115,11 +130,98 @@ func (r *Repository) GetRatingSummary(ctx context.Context, targetType, targetID 
 	var item RatingSummary
 	if err := row.Scan(&item.TargetType, &item.TargetID, &item.RatingAvg, &item.RatingCount, &item.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return RatingSummary{TargetType: targetType, TargetID: targetID}, nil
+			return RatingSummary{TargetType: targetType, TargetID: targetID, RatingAvg: 5, RatingCount: 0}, nil
 		}
 		return RatingSummary{}, err
 	}
 	return item, nil
+}
+
+func (r *Repository) RecalculateClientRatingTx(ctx context.Context, tx pgx.Tx, clientID string) error {
+	_, err := tx.Exec(ctx, `
+		WITH stats AS (
+			SELECT COALESCE(ROUND(AVG(rating)::numeric, 2), 5) AS rating_avg,
+			       COUNT(*)::int AS rating_count
+			FROM reviews
+			WHERE reviewee_id=$1::uuid
+			  AND reviewee_role='client'
+			  AND deleted_at IS NULL
+		)
+		UPDATE client_profiles cp
+		SET rating_avg=stats.rating_avg,
+		    rating_count=stats.rating_count,
+		    completed_orders=(
+		    	SELECT COUNT(*)::int
+		    	FROM orders
+		    	WHERE client_id=$1::uuid AND status='completed' AND deleted_at IS NULL
+		    ),
+		    updated_at=NOW()
+		FROM stats
+		WHERE cp.user_id=$1::uuid
+	`, clientID)
+	return err
+}
+
+func (r *Repository) UpdateEntityReviewOwnedTx(ctx context.Context, tx pgx.Tx, id, userID string, rating int, comment *string) (EntityReview, error) {
+	row := tx.QueryRow(ctx, `
+		UPDATE entity_reviews
+		SET rating=$3,
+		    comment=$4,
+		    updated_at=NOW()
+		WHERE id=$1 AND author_id=$2 AND deleted_at IS NULL AND COALESCE(metadata->>'source','') <> 'course_review'
+		RETURNING id::text, author_id::text, target_type, target_id::text, rating, comment, metadata, created_at::text, updated_at::text
+	`, id, userID, rating, comment)
+	return scanEntityReview(row)
+}
+
+func (r *Repository) DeleteEntityReviewOwnedTx(ctx context.Context, tx pgx.Tx, id, userID string) (EntityReview, error) {
+	row := tx.QueryRow(ctx, `
+		UPDATE entity_reviews
+		SET deleted_at=NOW(),
+		    updated_at=NOW()
+		WHERE id=$1 AND author_id=$2 AND deleted_at IS NULL AND COALESCE(metadata->>'source','') <> 'course_review'
+		RETURNING id::text, author_id::text, target_type, target_id::text, rating, comment, metadata, created_at::text, updated_at::text
+	`, id, userID)
+	return scanEntityReview(row)
+}
+
+func (r *Repository) UpdateCourseOwnerMirrorTx(ctx context.Context, tx pgx.Tx, courseReviewID string, rating int, comment *string) (targetID string, updated bool, err error) {
+	row := tx.QueryRow(ctx, `
+		UPDATE entity_reviews
+		SET rating=$2,
+		    comment=$3,
+		    updated_at=NOW()
+		WHERE metadata->>'course_review_id'=$1
+		  AND target_type='user'
+		  AND deleted_at IS NULL
+		RETURNING target_id::text
+	`, courseReviewID, rating, comment)
+	if err := row.Scan(&targetID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return targetID, true, nil
+}
+
+func (r *Repository) DeleteCourseOwnerMirrorTx(ctx context.Context, tx pgx.Tx, courseReviewID string) (targetID string, deleted bool, err error) {
+	row := tx.QueryRow(ctx, `
+		UPDATE entity_reviews
+		SET deleted_at=NOW(),
+		    updated_at=NOW()
+		WHERE metadata->>'course_review_id'=$1
+		  AND target_type='user'
+		  AND deleted_at IS NULL
+		RETURNING target_id::text
+	`, courseReviewID)
+	if err := row.Scan(&targetID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return targetID, true, nil
 }
 
 func scanEntityReview(row interface{ Scan(dest ...any) error }) (EntityReview, error) {

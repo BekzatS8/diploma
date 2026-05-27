@@ -111,6 +111,80 @@ func (h *Handler) ListExecutor(c *gin.Context) {
 	response.JSON(c, http.StatusOK, gin.H{"items": items, "page": page, "page_size": size, "total": total})
 }
 
+func (h *Handler) ListUser(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	items, total, err := h.service.ListUser(c.Request.Context(), c.Param("userId"), page, size)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, gin.H{"items": items, "page": page, "page_size": size, "total": total})
+}
+
+func (h *Handler) ListAuthored(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	items, total, err := h.service.ListAuthored(c.Request.Context(), user.UserID, page, size)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, gin.H{"items": items, "page": page, "page_size": size, "total": total})
+}
+
+func (h *Handler) GetAuthored(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	item, err := h.service.GetAuthored(c.Request.Context(), c.Param("reviewId"), user.UserID)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, item)
+}
+
+func (h *Handler) PatchAuthored(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	var req createReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
+		return
+	}
+	item, err := h.service.UpdateAuthored(c.Request.Context(), c.Param("reviewId"), user.UserID, req.Rating, req.Comment)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, item)
+}
+
+func (h *Handler) DeleteAuthored(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	item, err := h.service.DeleteAuthored(c.Request.Context(), c.Param("reviewId"), user.UserID)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, item)
+}
+
 func (h *Handler) handleErr(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):

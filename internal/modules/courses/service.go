@@ -34,7 +34,7 @@ type ServiceOptions struct {
 
 func NewService(repo *Repository, notifier *notifications.Service, uploads *uploads.Service, opts ServiceOptions) *Service {
 	if opts.ExecutorCreatorMinRating <= 0 {
-		opts.ExecutorCreatorMinRating = 4.5
+		opts.ExecutorCreatorMinRating = 5
 	}
 	if opts.ExecutorCreatorMinReviews < 0 {
 		opts.ExecutorCreatorMinReviews = 0

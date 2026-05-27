@@ -70,7 +70,7 @@ func New(deps Deps) *gin.Engine {
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
-	r.Use(middleware.ValidateUUIDPathParams("id", "userId", "executorId", "responseId", "transactionId", "materialId", "messageId"))
+	r.Use(middleware.ValidateUUIDPathParams("id", "userId", "executorId", "responseId", "transactionId", "materialId", "messageId", "reviewId"))
 
 	if deps.Config.Metrics.Enabled && deps.Metrics != nil {
 		r.Use(deps.Metrics.Middleware())
@@ -140,6 +140,13 @@ func New(deps Deps) *gin.Engine {
 		reviewsGroup.Use(middleware.RequireAuth(deps.JWTManager))
 		reviewsGroup.POST("", deps.ReviewsHandler.CreateEntity)
 
+		myReviewsGroup := v1.Group("/my/reviews")
+		myReviewsGroup.Use(middleware.RequireAuth(deps.JWTManager))
+		myReviewsGroup.GET("", deps.ReviewsHandler.ListAuthored)
+		myReviewsGroup.GET("/:reviewId", deps.ReviewsHandler.GetAuthored)
+		myReviewsGroup.PATCH("/:reviewId", deps.ReviewsHandler.PatchAuthored)
+		myReviewsGroup.DELETE("/:reviewId", deps.ReviewsHandler.DeleteAuthored)
+
 		leadsGroup := v1.Group("/leads")
 		leadsGroup.POST("/executor", deps.LeadsHandler.SubmitExecutor)
 
@@ -206,7 +213,12 @@ func New(deps Deps) *gin.Engine {
 		clientOrderLifecycle.POST("/review", deps.ReviewsHandler.Create)
 		clientOrderLifecycle.GET("/review", deps.ReviewsHandler.GetByOrder)
 
+		orderReviewLifecycle := v1.Group("/orders/:id/review")
+		orderReviewLifecycle.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("client", "executor"))
+		orderReviewLifecycle.POST("", deps.ReviewsHandler.Create)
+
 		v1.GET("/executors/:executorId/reviews", deps.ReviewsHandler.ListExecutor)
+		v1.GET("/users/:userId/reviews", deps.ReviewsHandler.ListUser)
 		v1.GET("/executors/:executorId/rating", deps.RatingHandler.GetRating)
 
 		mySanctions := v1.Group("/my/sanctions")
