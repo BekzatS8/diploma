@@ -77,6 +77,20 @@ type ListCoursesQuery struct {
 type CourseDetailResponse struct {
 	Course    Course           `json:"course"`
 	Materials []CourseMaterial `json:"materials"`
+	Lessons   []CourseLesson   `json:"lessons"`
+}
+
+type CourseLesson struct {
+	Key       string           `json:"key"`
+	Title     string           `json:"title"`
+	Position  int              `json:"position"`
+	Materials []CourseMaterial `json:"materials"`
+}
+
+type CourseLearningResponse struct {
+	Assignment CourseAssignment `json:"assignment"`
+	Materials  []CourseMaterial `json:"materials"`
+	Lessons    []CourseLesson   `json:"lessons"`
 }
 
 type CreateAssignmentRequest struct {

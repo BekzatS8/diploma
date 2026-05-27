@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -188,7 +189,7 @@ func (r *Repository) UpdateCourse(ctx context.Context, id, ownerID string, isAdm
 }
 
 func (r *Repository) GetCourseByID(ctx context.Context, id string) (Course, error) {
-	row := r.db.QueryRow(ctx, `SELECT `+courseColumns("")+` FROM courses WHERE id=$1`, id)
+	row := r.db.QueryRow(ctx, `SELECT `+courseColumns("")+` FROM courses WHERE id=$1 AND deleted_at IS NULL`, id)
 	return scanCourse(row)
 }
 
@@ -377,11 +378,78 @@ func (r *Repository) CreateAssignment(ctx context.Context, p CreateAssignmentPar
 	`, a.ID, a.ExecutorID); err != nil {
 		return CourseAssignment{}, err
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE courses
+		SET enrollment_count=enrollment_count+1,
+		    updated_at=NOW()
+		WHERE id=$1
+	`, a.CourseID); err != nil {
+		return CourseAssignment{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return CourseAssignment{}, err
 	}
 	a.Progress = &CourseProgress{AssignmentID: a.ID, ExecutorID: a.ExecutorID, ProgressPercent: 0, Status: "assigned"}
 	return a, nil
+}
+
+func (r *Repository) EnrollSelf(ctx context.Context, courseID, executorID string) (CourseAssignment, bool, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return CourseAssignment{}, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	existing, err := getMyAssignmentByCourseTx(ctx, tx, courseID, executorID)
+	if err == nil {
+		if err := tx.Commit(ctx); err != nil {
+			return CourseAssignment{}, false, err
+		}
+		items := []CourseAssignment{existing}
+		if err := r.attachProgress(ctx, items); err != nil {
+			return CourseAssignment{}, false, err
+		}
+		return items[0], false, nil
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return CourseAssignment{}, false, err
+	}
+
+	var assignmentID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO course_assignments(course_id, executor_id, assigned_by, reason, source, status)
+		VALUES($1,$2,$2,'Self-enrolled by executor','self_enrolled','assigned')
+		RETURNING id::text
+	`, courseID, executorID).Scan(&assignmentID); err != nil {
+		return CourseAssignment{}, false, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO course_progress(assignment_id, executor_id, progress_percent, status)
+		VALUES($1,$2,0,'assigned')
+		ON CONFLICT (assignment_id) DO NOTHING
+	`, assignmentID, executorID); err != nil {
+		return CourseAssignment{}, false, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE courses
+		SET enrollment_count=enrollment_count+1,
+		    updated_at=NOW()
+		WHERE id=$1
+	`, courseID); err != nil {
+		return CourseAssignment{}, false, err
+	}
+	item, err := getAssignmentWithCourseTx(ctx, tx, assignmentID)
+	if err != nil {
+		return CourseAssignment{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CourseAssignment{}, false, err
+	}
+	items := []CourseAssignment{item}
+	if err := r.attachProgress(ctx, items); err != nil {
+		return CourseAssignment{}, false, err
+	}
+	return items[0], true, nil
 }
 
 func (r *Repository) IsCoursePublished(ctx context.Context, courseID string) (bool, error) {
@@ -572,15 +640,23 @@ func (r *Repository) ListAssignmentsAdmin(ctx context.Context, q ListAssignments
 	return items, total, nil
 }
 
-func (r *Repository) ListAssignmentsMy(ctx context.Context, executorID string, onlyPublished bool, page, size int) ([]CourseAssignment, int64, error) {
+func (r *Repository) ListAssignmentsMy(ctx context.Context, executorID string, onlyPublished bool, status string, page, size int) ([]CourseAssignment, int64, error) {
 	where := "ca.executor_id=$1"
+	args := []any{executorID}
+	argPos := 2
 	if onlyPublished {
 		where += " AND c.status='published' AND c.deleted_at IS NULL"
 	}
+	if status != "" {
+		where += fmt.Sprintf(" AND ca.status=$%d", argPos)
+		args = append(args, status)
+		argPos++
+	}
 	var total int64
-	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM course_assignments ca JOIN courses c ON c.id=ca.course_id WHERE `+where, executorID).Scan(&total); err != nil {
+	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM course_assignments ca JOIN courses c ON c.id=ca.course_id WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
+	args = append(args, size, (page-1)*size)
 	rows, err := r.db.Query(ctx, `
 		SELECT ca.id, ca.course_id, ca.executor_id, ca.sanction_id, ca.assigned_by, ca.reason, ca.source, ca.status, ca.assigned_at, ca.due_at, ca.completed_at, ca.created_at, ca.updated_at,
 		       `+courseColumns("c")+`
@@ -588,8 +664,7 @@ func (r *Repository) ListAssignmentsMy(ctx context.Context, executorID string, o
 		JOIN courses c ON c.id = ca.course_id
 		WHERE `+where+`
 		ORDER BY ca.assigned_at DESC
-		LIMIT $2 OFFSET $3
-	`, executorID, size, (page-1)*size)
+		LIMIT $`+fmt.Sprintf("%d", argPos)+` OFFSET $`+fmt.Sprintf("%d", argPos+1), args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -612,6 +687,31 @@ func (r *Repository) GetMyAssignmentByID(ctx context.Context, id, executorID str
 		JOIN courses c ON c.id = ca.course_id
 		WHERE ca.id=$1 AND ca.executor_id=$2 AND c.status='published' AND c.deleted_at IS NULL
 	`, id, executorID)
+	item, err := scanAssignmentWithCourse(row)
+	if err != nil {
+		return CourseAssignment{}, err
+	}
+	items := []CourseAssignment{item}
+	if err := r.attachProgress(ctx, items); err != nil {
+		return CourseAssignment{}, err
+	}
+	return items[0], nil
+}
+
+func (r *Repository) GetMyAssignmentByCourseID(ctx context.Context, courseID, executorID string) (CourseAssignment, error) {
+	row := r.db.QueryRow(ctx, `
+		SELECT ca.id, ca.course_id, ca.executor_id, ca.sanction_id, ca.assigned_by, ca.reason, ca.source, ca.status, ca.assigned_at, ca.due_at, ca.completed_at, ca.created_at, ca.updated_at,
+		       `+courseColumns("c")+`
+		FROM course_assignments ca
+		JOIN courses c ON c.id = ca.course_id
+		WHERE ca.course_id=$1
+		  AND ca.executor_id=$2
+		  AND ca.status <> 'cancelled'
+		  AND c.status='published'
+		  AND c.deleted_at IS NULL
+		ORDER BY ca.assigned_at DESC
+		LIMIT 1
+	`, courseID, executorID)
 	item, err := scanAssignmentWithCourse(row)
 	if err != nil {
 		return CourseAssignment{}, err
@@ -736,6 +836,23 @@ func getAssignmentWithCourseTx(ctx context.Context, tx pgx.Tx, id string) (Cours
 		JOIN courses c ON c.id = ca.course_id
 		WHERE ca.id=$1
 	`, id)
+	return scanAssignmentWithCourse(row)
+}
+
+func getMyAssignmentByCourseTx(ctx context.Context, tx pgx.Tx, courseID, executorID string) (CourseAssignment, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT ca.id, ca.course_id, ca.executor_id, ca.sanction_id, ca.assigned_by, ca.reason, ca.source, ca.status, ca.assigned_at, ca.due_at, ca.completed_at, ca.created_at, ca.updated_at,
+		       `+courseColumns("c")+`
+		FROM course_assignments ca
+		JOIN courses c ON c.id = ca.course_id
+		WHERE ca.course_id=$1
+		  AND ca.executor_id=$2
+		  AND ca.status <> 'cancelled'
+		  AND c.status='published'
+		  AND c.deleted_at IS NULL
+		ORDER BY ca.assigned_at DESC
+		LIMIT 1
+	`, courseID, executorID)
 	return scanAssignmentWithCourse(row)
 }
 

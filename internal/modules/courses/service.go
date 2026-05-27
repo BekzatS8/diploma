@@ -307,6 +307,40 @@ func (s *Service) GetCourseCatalogByID(ctx context.Context, id, userID, role str
 	return item, materials, nil
 }
 
+func (s *Service) EnrollCourse(ctx context.Context, courseID, userID, role string) (CourseAssignment, bool, error) {
+	if role != "executor" {
+		return CourseAssignment{}, false, ErrForbidden
+	}
+	course, err := s.repo.GetCourseByID(ctx, courseID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CourseAssignment{}, false, ErrNotFound
+		}
+		return CourseAssignment{}, false, err
+	}
+	if course.Status != "published" {
+		return CourseAssignment{}, false, ErrNotFound
+	}
+	if courseOwnedBy(course, userID) {
+		return CourseAssignment{}, false, ErrForbidden
+	}
+	item, created, err := s.repo.EnrollSelf(ctx, courseID, userID)
+	if err != nil {
+		return CourseAssignment{}, false, err
+	}
+	if created && s.notifier != nil {
+		if ownerID := courseOwnerID(course); ownerID != "" {
+			_, _ = s.notifier.EmitInApp(ctx, ownerID, notifications.TypeCourseAssigned, map[string]any{
+				"course_id":            item.CourseID,
+				"course_assignment_id": item.ID,
+				"executor_id":          item.ExecutorID,
+				"source":               "self_enrolled",
+			})
+		}
+	}
+	return item, created, nil
+}
+
 func (s *Service) CreateAssignment(ctx context.Context, userID, role string, req CreateAssignmentRequest) (CourseAssignment, error) {
 	if role != "admin" {
 		return CourseAssignment{}, ErrForbidden
@@ -363,7 +397,28 @@ func (s *Service) ListMyAssignments(ctx context.Context, userID, role string, pa
 	if pageSize < 1 || pageSize > 100 {
 		pageSize = 20
 	}
-	return s.repo.ListAssignmentsMy(ctx, userID, true, page, pageSize)
+	return s.repo.ListAssignmentsMy(ctx, userID, true, "", page, pageSize)
+}
+
+func (s *Service) ListMyCourses(ctx context.Context, userID, role, status string, page, pageSize int) ([]CourseAssignment, int64, error) {
+	if role != "executor" {
+		return nil, 0, ErrForbidden
+	}
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	status = strings.TrimSpace(strings.ToLower(status))
+	if status != "" && status != "assigned" && status != "in_progress" && status != "completed" && status != "overdue" && status != "cancelled" {
+		return nil, 0, ErrInvalidInput
+	}
+	return s.repo.ListAssignmentsMy(ctx, userID, true, status, page, pageSize)
+}
+
+func (s *Service) ListCompletedCourses(ctx context.Context, userID, role string, page, pageSize int) ([]CourseAssignment, int64, error) {
+	return s.ListMyCourses(ctx, userID, role, "completed", page, pageSize)
 }
 
 func (s *Service) GetMyAssignmentByID(ctx context.Context, id, userID, role string) (CourseAssignment, error) {
@@ -380,11 +435,27 @@ func (s *Service) GetMyAssignmentByID(ctx context.Context, id, userID, role stri
 	return item, nil
 }
 
+func (s *Service) GetMyCourse(ctx context.Context, id, userID, role string) (CourseLearningResponse, error) {
+	item, err := s.resolveMyLearningAssignment(ctx, id, userID, role)
+	if err != nil {
+		return CourseLearningResponse{}, err
+	}
+	materials, err := s.repo.ListMaterialsByCourse(ctx, item.CourseID)
+	if err != nil {
+		return CourseLearningResponse{}, err
+	}
+	return CourseLearningResponse{Assignment: item, Materials: materials, Lessons: BuildCourseLessons(materials)}, nil
+}
+
 func (s *Service) MarkCompleted(ctx context.Context, id, userID, role string) (CourseAssignment, error) {
 	if role != "executor" {
 		return CourseAssignment{}, ErrForbidden
 	}
-	item, completedNow, err := s.repo.MarkAssignmentCompleted(ctx, id, userID)
+	assignment, err := s.resolveMyLearningAssignment(ctx, id, userID, role)
+	if err != nil {
+		return CourseAssignment{}, err
+	}
+	item, completedNow, err := s.repo.MarkAssignmentCompleted(ctx, assignment.ID, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CourseAssignment{}, ErrNotFound
@@ -405,7 +476,11 @@ func (s *Service) MarkMaterialCompleted(ctx context.Context, assignmentID, mater
 	if role != "executor" {
 		return CourseAssignment{}, ErrForbidden
 	}
-	item, completedNow, err := s.repo.MarkMaterialCompleted(ctx, assignmentID, materialID, userID)
+	assignment, err := s.resolveMyLearningAssignment(ctx, assignmentID, userID, role)
+	if err != nil {
+		return CourseAssignment{}, err
+	}
+	item, completedNow, err := s.repo.MarkMaterialCompleted(ctx, assignment.ID, materialID, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CourseAssignment{}, ErrNotFound
@@ -418,6 +493,27 @@ func (s *Service) MarkMaterialCompleted(ctx context.Context, assignmentID, mater
 			"course_assignment_id": item.ID,
 			"executor_id":          item.ExecutorID,
 		})
+	}
+	return item, nil
+}
+
+func (s *Service) resolveMyLearningAssignment(ctx context.Context, id, userID, role string) (CourseAssignment, error) {
+	if role != "executor" {
+		return CourseAssignment{}, ErrForbidden
+	}
+	item, err := s.repo.GetMyAssignmentByID(ctx, id, userID)
+	if err == nil {
+		return item, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return CourseAssignment{}, err
+	}
+	item, err = s.repo.GetMyAssignmentByCourseID(ctx, id, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CourseAssignment{}, ErrNotFound
+		}
+		return CourseAssignment{}, err
 	}
 	return item, nil
 }
@@ -466,6 +562,20 @@ func (s *Service) ListCourseStudents(ctx context.Context, courseID, userID, role
 
 func (s *Service) creatorRole(role string) bool {
 	return role == "coach" || role == "executor" || role == "admin"
+}
+
+func courseOwnerID(course Course) string {
+	if course.CreatedBy != nil && *course.CreatedBy != "" {
+		return *course.CreatedBy
+	}
+	if course.CoachID != nil && *course.CoachID != "" {
+		return *course.CoachID
+	}
+	return ""
+}
+
+func courseOwnedBy(course Course, userID string) bool {
+	return courseOwnerID(course) == userID
 }
 
 func (s *Service) canCreateCourse(ctx context.Context, userID, role string) (bool, error) {
