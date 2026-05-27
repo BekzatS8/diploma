@@ -1,0 +1,4 @@
+ALTER TABLE users
+    DROP COLUMN IF EXISTS bio,
+    DROP COLUMN IF EXISTS phone,
+    DROP COLUMN IF EXISTS display_name;

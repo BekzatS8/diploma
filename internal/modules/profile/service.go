@@ -84,6 +84,19 @@ func (s *Service) UpdateCurrentProfile(ctx context.Context, userID, role string,
 		req.IIN = &v
 	}
 	req.Specializations = normalizeSpecializations(req.Specializations)
+
+	// Frontend may send expertise/city for the wrong role — normalize before SQL.
+	switch role {
+	case "executor":
+		if req.ExperienceLevel == nil && req.Expertise != nil {
+			req.ExperienceLevel = req.Expertise
+		}
+	case "client":
+		if req.Address == nil && req.City != nil {
+			req.Address = req.City
+		}
+	}
+
 	return s.repo.PatchByRole(ctx, userID, role, req)
 }
 

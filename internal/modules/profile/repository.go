@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -17,6 +18,13 @@ type Repository struct {
 
 func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
+}
+
+func coalesceAboutBio(about, bio *string) *string {
+	if about != nil && strings.TrimSpace(*about) != "" {
+		return about
+	}
+	return bio
 }
 
 func (r *Repository) GetByRole(ctx context.Context, userID, role string) (map[string]any, error) {
@@ -32,7 +40,22 @@ func (r *Repository) GetByRole(ctx context.Context, userID, role string) (map[st
 
 	switch role {
 	case "admin":
-		base["profile_name"] = email
+		var displayName, phone, bio *string
+		err := r.db.QueryRow(ctx, `
+			SELECT display_name, phone, bio
+			FROM users WHERE id=$1
+		`, userID).Scan(&displayName, &phone, &bio)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if displayName != nil && *displayName != "" {
+			base["profile_name"] = *displayName
+		} else {
+			base["profile_name"] = email
+		}
+		base["phone"] = phone
+		base["bio"] = bio
+		base["about"] = bio
 		return base, nil
 	case "client":
 		var companyName, taxNumber, phone, about, clientType, contactName, contactPosition, address, website *string
@@ -245,7 +268,15 @@ func (r *Repository) PatchByRole(ctx context.Context, userID, role string, req U
 		`, userID, req.ProfileName, req.Bio, req.Expertise, req.Website)
 		return err
 	case "admin":
-		return nil
+		_, err := r.db.Exec(ctx, `
+			UPDATE users
+			SET display_name = COALESCE($2, display_name),
+				phone = COALESCE($3, phone),
+				bio = COALESCE($4, bio),
+				updated_at = NOW()
+			WHERE id = $1
+		`, userID, req.ProfileName, req.Phone, coalesceAboutBio(req.About, req.Bio))
+		return err
 	default:
 		return fmt.Errorf("unsupported role")
 	}
