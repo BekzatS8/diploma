@@ -1,6 +1,10 @@
 ALTER TABLE course_assignments
     DROP CONSTRAINT IF EXISTS course_assignments_source_check;
 
+UPDATE course_assignments
+SET source = 'self_enrolled'
+WHERE source = 'self_enroll';
+
 ALTER TABLE course_assignments
     ADD CONSTRAINT course_assignments_source_check
     CHECK (source IN (

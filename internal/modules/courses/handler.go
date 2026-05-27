@@ -292,6 +292,29 @@ func (h *Handler) ListAdminAssignments(c *gin.Context) {
 	response.JSON(c, http.StatusOK, response.ListEnvelope[CourseAssignment]{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total})
 }
 
+func (h *Handler) EnrollMyCourse(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	var req EnrollCourseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
+		return
+	}
+	item, created, err := h.service.EnrollCourse(c.Request.Context(), req.CourseID, user.UserID, user.PrimaryRole())
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	response.JSON(c, status, item)
+}
+
 func (h *Handler) ListMyAssignments(c *gin.Context) {
 	user, ok := middleware.CurrentUser(c)
 	if !ok {
