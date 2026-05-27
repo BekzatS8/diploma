@@ -260,6 +260,7 @@ func New(deps Deps) *gin.Engine {
 		myCourseAssignments := v1.Group("/my/course-assignments")
 		myCourseAssignments.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor"))
 		myCourseAssignments.GET("", deps.CoursesHandler.ListMyAssignments)
+		myCourseAssignments.POST("/enroll", deps.CoursesHandler.EnrollMyCourse)
 		myCourseAssignments.GET("/:id", deps.CoursesHandler.GetMyAssignment)
 		myCourseAssignments.POST("/:id/materials/:materialId/complete", deps.CoursesHandler.MarkMaterialCompleted)
 		myCourseAssignments.POST("/:id/mark-completed", deps.CoursesHandler.MarkCompleted)

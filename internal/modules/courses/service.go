@@ -307,6 +307,45 @@ func (s *Service) GetCourseCatalogByID(ctx context.Context, id, userID, role str
 	return item, materials, nil
 }
 
+func (s *Service) EnrollMyCourse(ctx context.Context, userID, role, courseID string) (CourseAssignment, error) {
+	if role != "executor" {
+		return CourseAssignment{}, ErrForbidden
+	}
+	courseID = strings.TrimSpace(courseID)
+	if courseID == "" {
+		return CourseAssignment{}, ErrInvalidInput
+	}
+	exists, err := s.repo.IsCoursePublished(ctx, courseID)
+	if err != nil {
+		return CourseAssignment{}, err
+	}
+	if !exists {
+		return CourseAssignment{}, ErrNotFound
+	}
+	reason := "Самостоятельная запись на курс"
+	item, err := s.repo.CreateAssignment(ctx, CreateAssignmentParams{
+		CourseID:   courseID,
+		ExecutorID: userID,
+		AssignedBy: userID,
+		Reason:     &reason,
+		Source:     "self_enroll",
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CourseAssignment{}, ErrConflict
+		}
+		return CourseAssignment{}, err
+	}
+	if s.notifier != nil {
+		_, _ = s.notifier.EmitInApp(ctx, userID, notifications.TypeCourseAssigned, map[string]any{
+			"course_id":            item.CourseID,
+			"course_assignment_id": item.ID,
+			"source":               "self_enroll",
+		})
+	}
+	return item, nil
+}
+
 func (s *Service) CreateAssignment(ctx context.Context, userID, role string, req CreateAssignmentRequest) (CourseAssignment, error) {
 	if role != "admin" {
 		return CourseAssignment{}, ErrForbidden

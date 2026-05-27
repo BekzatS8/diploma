@@ -87,6 +87,10 @@ type CreateAssignmentRequest struct {
 	DueAt      *time.Time `json:"due_at"`
 }
 
+type EnrollCourseRequest struct {
+	CourseID string `json:"course_id" binding:"required,uuid"`
+}
+
 type ListAssignmentsQuery struct {
 	ExecutorID string
 	CourseID   string
