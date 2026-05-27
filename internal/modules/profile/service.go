@@ -2,9 +2,12 @@ package profile
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"buhpro/internal/modules/uploads"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type Service struct {
@@ -92,11 +95,23 @@ func (s *Service) SetAvatar(ctx context.Context, userID, role, uploadID string) 
 	if role != "admin" && item.AuthorID != userID {
 		return uploads.ErrForbidden
 	}
-	return s.repo.SetAvatarUploadID(ctx, userID, role, uploadID)
+	if err := s.repo.SetAvatarUploadID(ctx, userID, role, uploadID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uploads.ErrNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Service) ClearAvatar(ctx context.Context, userID, role string) error {
-	return s.repo.ClearAvatarUploadID(ctx, userID, role)
+	if err := s.repo.ClearAvatarUploadID(ctx, userID, role); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uploads.ErrNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 func normalizeSpecializations(items []string) []string {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,12 +23,17 @@ func (r *Repository) GetByRole(ctx context.Context, userID, role string) (map[st
 	base := map[string]any{}
 	var email string
 	var createdAt string
-	if err := r.db.QueryRow(ctx, `SELECT email, created_at::text FROM users WHERE id=$1`, userID).Scan(&email, &createdAt); err == nil {
+	var userAvatarUploadID *string
+	if err := r.db.QueryRow(ctx, `SELECT email, created_at::text, avatar_upload_id::text FROM users WHERE id=$1`, userID).Scan(&email, &createdAt, &userAvatarUploadID); err == nil {
 		base["email"] = email
 		base["platform_joined_at"] = createdAt
+		base["avatar_upload_id"] = userAvatarUploadID
 	}
 
 	switch role {
+	case "admin":
+		base["profile_name"] = email
+		return base, nil
 	case "client":
 		var companyName, taxNumber, phone, about, clientType, contactName, contactPosition, address, website *string
 		var avatarUploadID *string
@@ -130,31 +136,47 @@ func (r *Repository) GetByRole(ctx context.Context, userID, role string) (map[st
 }
 
 func (r *Repository) SetAvatarUploadID(ctx context.Context, userID, role, uploadID string) error {
-	var err error
+	var (
+		tag pgconn.CommandTag
+		err error
+	)
 	switch role {
 	case "client":
-		_, err = r.db.Exec(ctx, `UPDATE client_profiles SET avatar_upload_id=$2, updated_at=NOW() WHERE user_id=$1`, userID, uploadID)
+		tag, err = r.db.Exec(ctx, `UPDATE client_profiles SET avatar_upload_id=$2, updated_at=NOW() WHERE user_id=$1`, userID, uploadID)
 	case "executor":
-		_, err = r.db.Exec(ctx, `UPDATE executor_profiles SET avatar_upload_id=$2, updated_at=NOW() WHERE user_id=$1`, userID, uploadID)
+		tag, err = r.db.Exec(ctx, `UPDATE executor_profiles SET avatar_upload_id=$2, updated_at=NOW() WHERE user_id=$1`, userID, uploadID)
 	case "coach":
-		_, err = r.db.Exec(ctx, `UPDATE coach_profiles SET avatar_upload_id=$2, updated_at=NOW() WHERE user_id=$1`, userID, uploadID)
+		tag, err = r.db.Exec(ctx, `UPDATE coach_profiles SET avatar_upload_id=$2, updated_at=NOW() WHERE user_id=$1`, userID, uploadID)
+	case "admin":
+		tag, err = r.db.Exec(ctx, `UPDATE users SET avatar_upload_id=$2, updated_at=NOW() WHERE id=$1`, userID, uploadID)
 	default:
 		err = fmt.Errorf("unsupported role")
+	}
+	if err == nil && tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
 	}
 	return err
 }
 
 func (r *Repository) ClearAvatarUploadID(ctx context.Context, userID, role string) error {
-	var err error
+	var (
+		tag pgconn.CommandTag
+		err error
+	)
 	switch role {
 	case "client":
-		_, err = r.db.Exec(ctx, `UPDATE client_profiles SET avatar_upload_id=NULL, updated_at=NOW() WHERE user_id=$1`, userID)
+		tag, err = r.db.Exec(ctx, `UPDATE client_profiles SET avatar_upload_id=NULL, updated_at=NOW() WHERE user_id=$1`, userID)
 	case "executor":
-		_, err = r.db.Exec(ctx, `UPDATE executor_profiles SET avatar_upload_id=NULL, updated_at=NOW() WHERE user_id=$1`, userID)
+		tag, err = r.db.Exec(ctx, `UPDATE executor_profiles SET avatar_upload_id=NULL, updated_at=NOW() WHERE user_id=$1`, userID)
 	case "coach":
-		_, err = r.db.Exec(ctx, `UPDATE coach_profiles SET avatar_upload_id=NULL, updated_at=NOW() WHERE user_id=$1`, userID)
+		tag, err = r.db.Exec(ctx, `UPDATE coach_profiles SET avatar_upload_id=NULL, updated_at=NOW() WHERE user_id=$1`, userID)
+	case "admin":
+		tag, err = r.db.Exec(ctx, `UPDATE users SET avatar_upload_id=NULL, updated_at=NOW() WHERE id=$1`, userID)
 	default:
 		err = fmt.Errorf("unsupported role")
+	}
+	if err == nil && tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
 	}
 	return err
 }
@@ -222,6 +244,8 @@ func (r *Repository) PatchByRole(ctx context.Context, userID, role string, req U
 			WHERE user_id = $1
 		`, userID, req.ProfileName, req.Bio, req.Expertise, req.Website)
 		return err
+	case "admin":
+		return nil
 	default:
 		return fmt.Errorf("unsupported role")
 	}
