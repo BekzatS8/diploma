@@ -53,10 +53,14 @@ func (r *Repository) CreateUserWithProfile(ctx context.Context, user User, in Re
 			VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), $12, NULLIF($13, ''), NULLIF($14, ''), 'pending')
 		`, user.ID, firstNonEmpty(in.ProfileName, strings.TrimSpace(in.FirstName+" "+in.LastName)), in.FirstName, in.LastName, in.MiddleName, in.IIN, in.Phone, in.City, in.ExperienceLevel, in.Education, in.WorkFormat, in.HourlyRate, in.About, in.Website)
 	case "coach":
+		expertise := strings.Join(in.Specializations, ", ")
+		if expertise == "" {
+			expertise = strings.TrimSpace(in.ExperienceLevel)
+		}
 		_, err = tx.Exec(ctx, `
-			INSERT INTO coach_profiles (user_id, display_name, website)
-			VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
-		`, user.ID, in.ProfileName, in.Website)
+			INSERT INTO coach_profiles (user_id, display_name, bio, expertise, website)
+			VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''))
+		`, user.ID, in.ProfileName, in.About, expertise, in.Website)
 	default:
 		return ErrInvalidRole
 	}
