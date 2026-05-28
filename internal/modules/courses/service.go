@@ -152,10 +152,10 @@ func (s *Service) ArchiveCourse(ctx context.Context, id, userID, role string) (C
 	if !s.creatorRole(role) {
 		return Course{}, ErrForbidden
 	}
-	item, err := s.repo.TransitionCourseStatus(ctx, id, userID, "published", "archived", role == "admin")
+	item, err := s.repo.ArchiveCourseByOwner(ctx, id, userID, role == "admin")
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Course{}, ErrConflict
+			return Course{}, ErrNotFound
 		}
 		return Course{}, err
 	}

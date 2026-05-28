@@ -382,6 +382,49 @@ func (r *Repository) TransitionCourseStatus(ctx context.Context, id, actorID, fr
 	return c, nil
 }
 
+func (r *Repository) ArchiveCourseByOwner(ctx context.Context, id, ownerID string, isAdmin bool) (Course, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Course{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `SELECT `+courseColumns("")+` FROM courses WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, id)
+	c, err := scanCourse(row)
+	if err != nil {
+		return Course{}, err
+	}
+	if c.Status == "archived" {
+		if err := tx.Commit(ctx); err != nil {
+			return Course{}, err
+		}
+		return c, nil
+	}
+	if !isAdmin {
+		if (c.CoachID == nil || *c.CoachID != ownerID) && (c.CreatedBy == nil || *c.CreatedBy != ownerID) {
+			return Course{}, pgx.ErrNoRows
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE courses
+		SET status='archived',
+		    is_published=FALSE,
+		    archived_at=COALESCE(archived_at, NOW()),
+		    updated_at=NOW()
+		WHERE id=$1
+	`, id); err != nil {
+		return Course{}, err
+	}
+	c, err = scanCourse(tx.QueryRow(ctx, `SELECT `+courseColumns("")+` FROM courses WHERE id=$1`, id))
+	if err != nil {
+		return Course{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Course{}, err
+	}
+	return c, nil
+}
+
 func (r *Repository) SoftDeleteCourse(ctx context.Context, id, ownerID string, isAdmin bool) error {
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
