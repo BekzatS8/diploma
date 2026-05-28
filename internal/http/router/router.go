@@ -243,6 +243,7 @@ func New(deps Deps) *gin.Engine {
 		coachCourses.GET("", deps.CoursesHandler.ListCoachCourses)
 		coachCourses.POST("/:id/publish", deps.CoursesHandler.PublishCourse)
 		coachCourses.POST("/:id/archive", deps.CoursesHandler.ArchiveCourse)
+		coachCourses.DELETE("/:id", deps.CoursesHandler.DeleteCourse)
 		coachCourses.POST("/:id/materials", deps.CoursesHandler.CreateMaterial)
 		coachCourses.PATCH("/:id/materials/:materialId", deps.CoursesHandler.PatchMaterial)
 		coachCourses.DELETE("/:id/materials/:materialId", deps.CoursesHandler.DeleteMaterial)
@@ -250,13 +251,18 @@ func New(deps Deps) *gin.Engine {
 		coursesCatalog := v1.Group("/courses")
 		coursesCatalog.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor", "coach", "admin"))
 		coursesCatalog.GET("", deps.CoursesHandler.ListCourses)
-		coursesCatalog.POST("/:id/enroll", deps.CoursesHandler.EnrollCourse)
 		coursesCatalog.GET("/:id", deps.CoursesHandler.GetCourse)
 
 		adminCourseAssignments := v1.Group("/admin/course-assignments")
 		adminCourseAssignments.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
 		adminCourseAssignments.POST("", deps.CoursesHandler.CreateAssignment)
 		adminCourseAssignments.GET("", deps.CoursesHandler.ListAdminAssignments)
+
+		adminCourses := v1.Group("/admin/courses")
+		adminCourses.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
+		adminCourses.GET("", deps.CoursesHandler.ListAdminCourses)
+		adminCourses.POST("/:id/approve", deps.CoursesHandler.ApproveCourseModeration)
+		adminCourses.POST("/:id/reject", deps.CoursesHandler.RejectCourseModeration)
 
 		myCourseAssignments := v1.Group("/my/course-assignments")
 		myCourseAssignments.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor"))
@@ -265,14 +271,6 @@ func New(deps Deps) *gin.Engine {
 		myCourseAssignments.GET("/:id", deps.CoursesHandler.GetMyAssignment)
 		myCourseAssignments.POST("/:id/materials/:materialId/complete", deps.CoursesHandler.MarkMaterialCompleted)
 		myCourseAssignments.POST("/:id/mark-completed", deps.CoursesHandler.MarkCompleted)
-
-		myCourses := v1.Group("/my/courses")
-		myCourses.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor"))
-		myCourses.GET("", deps.CoursesHandler.ListMyCourses)
-		myCourses.GET("/completed", deps.CoursesHandler.ListCompletedCourses)
-		myCourses.GET("/:id", deps.CoursesHandler.GetMyCourse)
-		myCourses.POST("/:id/materials/:materialId/complete", deps.CoursesHandler.MarkMaterialCompleted)
-		myCourses.POST("/:id/mark-completed", deps.CoursesHandler.MarkCompleted)
 
 		myNotifications := v1.Group("/my/notifications")
 		myNotifications.Use(middleware.RequireAuth(deps.JWTManager))

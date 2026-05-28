@@ -70,10 +70,13 @@ type OrderReviewPreconditions struct {
 func (r *Repository) CanCreateReview(ctx context.Context, orderID, userID, role string) (OrderReviewPreconditions, bool, error) {
 	var p OrderReviewPreconditions
 	err := r.db.QueryRow(ctx, `
-		SELECT o.client_id, resp.executor_id
+		SELECT o.client_id::text, COALESCE(o.selected_executor_id::text, resp.executor_id::text)
 		FROM orders o
-		JOIN responses resp ON resp.id = o.selected_response_id
-		WHERE o.id=$1 AND o.deleted_at IS NULL AND o.status='completed' AND o.selected_response_id IS NOT NULL
+		LEFT JOIN responses resp ON resp.id = o.selected_response_id
+		WHERE o.id=$1
+		  AND o.deleted_at IS NULL
+		  AND o.status='completed'
+		  AND COALESCE(o.selected_executor_id, resp.executor_id) IS NOT NULL
 	`, orderID).Scan(&p.ClientID, &p.ExecutorID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -411,7 +414,7 @@ func (r *Repository) GetCourseOwner(ctx context.Context, courseID string) (strin
 		SELECT COALESCE(created_by, coach_id)::text
 		FROM courses
 		WHERE id=$1 AND deleted_at IS NULL
-	`).Scan(&ownerID)
+	`, courseID).Scan(&ownerID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return "", false, nil

@@ -65,7 +65,7 @@ func (h *Handler) GetCoachCourse(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, CourseDetailResponse{Course: item, Materials: materials, Lessons: BuildCourseLessons(materials)})
+	response.JSON(c, http.StatusOK, CourseDetailResponse{Course: item, Materials: materials})
 }
 
 func (h *Handler) ListCoachCourses(c *gin.Context) {
@@ -147,6 +147,19 @@ func (h *Handler) ArchiveCourse(c *gin.Context) {
 	response.JSON(c, http.StatusOK, item)
 }
 
+func (h *Handler) DeleteCourse(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	if err := h.service.DeleteCourse(c.Request.Context(), c.Param("id"), user.UserID, user.PrimaryRole()); err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, response.StatusResponse{Status: "deleted"})
+}
+
 func (h *Handler) CreateMaterial(c *gin.Context) {
 	user, ok := middleware.CurrentUser(c)
 	if !ok {
@@ -205,11 +218,12 @@ func (h *Handler) ListCourses(c *gin.Context) {
 		return
 	}
 	q := ListCoursesQuery{
-		Status:   strings.TrimSpace(c.Query("status")),
-		Category: strings.TrimSpace(c.Query("category")),
-		Search:   strings.TrimSpace(c.Query("q")),
-		Page:     parseIntDefault(c.Query("page"), 1),
-		PageSize: parseIntDefault(c.Query("page_size"), 20),
+		Status:           strings.TrimSpace(c.Query("status")),
+		ModerationStatus: strings.TrimSpace(c.Query("moderation_status")),
+		Category:         strings.TrimSpace(c.Query("category")),
+		Search:           strings.TrimSpace(c.Query("q")),
+		Page:             parseIntDefault(c.Query("page"), 1),
+		PageSize:         parseIntDefault(c.Query("page_size"), 20),
 	}
 	items, total, err := h.service.ListCoursesForRole(c.Request.Context(), user.UserID, user.PrimaryRole(), q)
 	if err != nil {
@@ -217,6 +231,61 @@ func (h *Handler) ListCourses(c *gin.Context) {
 		return
 	}
 	response.JSON(c, http.StatusOK, response.ListEnvelope[Course]{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total})
+}
+
+func (h *Handler) ListAdminCourses(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	q := ListCoursesQuery{
+		Status:           strings.TrimSpace(c.Query("status")),
+		ModerationStatus: strings.TrimSpace(c.Query("moderation_status")),
+		Category:         strings.TrimSpace(c.Query("category")),
+		Search:           strings.TrimSpace(c.Query("q")),
+		Page:             parseIntDefault(c.Query("page"), 1),
+		PageSize:         parseIntDefault(c.Query("page_size"), 20),
+	}
+	items, total, err := h.service.ListAdminCourses(c.Request.Context(), user.PrimaryRole(), q)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, response.ListEnvelope[Course]{Items: items, Page: q.Page, PageSize: q.PageSize, Total: total})
+}
+
+func (h *Handler) ApproveCourseModeration(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	item, err := h.service.ApproveCourseModeration(c.Request.Context(), c.Param("id"), user.PrimaryRole())
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, item)
+}
+
+func (h *Handler) RejectCourseModeration(c *gin.Context) {
+	user, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+	var req RejectCourseRequest
+	if err := c.ShouldBindJSON(&req); err != nil && c.Request.ContentLength > 0 {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
+		return
+	}
+	item, err := h.service.RejectCourseModeration(c.Request.Context(), c.Param("id"), user.PrimaryRole(), req)
+	if err != nil {
+		h.handleErr(c, err)
+		return
+	}
+	response.JSON(c, http.StatusOK, item)
 }
 
 func (h *Handler) GetCourse(c *gin.Context) {
@@ -230,25 +299,7 @@ func (h *Handler) GetCourse(c *gin.Context) {
 		h.handleErr(c, err)
 		return
 	}
-	response.JSON(c, http.StatusOK, CourseDetailResponse{Course: item, Materials: materials, Lessons: BuildCourseLessons(materials)})
-}
-
-func (h *Handler) EnrollCourse(c *gin.Context) {
-	user, ok := middleware.CurrentUser(c)
-	if !ok {
-		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-	item, created, err := h.service.EnrollCourse(c.Request.Context(), c.Param("id"), user.UserID, user.PrimaryRole())
-	if err != nil {
-		h.handleErr(c, err)
-		return
-	}
-	status := http.StatusOK
-	if created {
-		status = http.StatusCreated
-	}
-	response.JSON(c, status, item)
+	response.JSON(c, http.StatusOK, CourseDetailResponse{Course: item, Materials: materials})
 }
 
 func (h *Handler) CreateAssignment(c *gin.Context) {
@@ -303,16 +354,16 @@ func (h *Handler) EnrollMyCourse(c *gin.Context) {
 		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
 		return
 	}
-	item, created, err := h.service.EnrollCourse(c.Request.Context(), req.CourseID, user.UserID, user.PrimaryRole())
+	item, created, err := h.service.EnrollMyCourse(c.Request.Context(), user.UserID, user.PrimaryRole(), req.CourseID)
 	if err != nil {
 		h.handleErr(c, err)
 		return
 	}
-	status := http.StatusOK
 	if created {
-		status = http.StatusCreated
+		response.JSON(c, http.StatusCreated, item)
+		return
 	}
-	response.JSON(c, status, item)
+	response.JSON(c, http.StatusOK, item)
 }
 
 func (h *Handler) ListMyAssignments(c *gin.Context) {
@@ -331,38 +382,6 @@ func (h *Handler) ListMyAssignments(c *gin.Context) {
 	response.JSON(c, http.StatusOK, response.ListEnvelope[CourseAssignment]{Items: items, Page: page, PageSize: size, Total: total})
 }
 
-func (h *Handler) ListMyCourses(c *gin.Context) {
-	user, ok := middleware.CurrentUser(c)
-	if !ok {
-		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-	page := parseIntDefault(c.Query("page"), 1)
-	size := parseIntDefault(c.Query("page_size"), 20)
-	items, total, err := h.service.ListMyCourses(c.Request.Context(), user.UserID, user.PrimaryRole(), strings.TrimSpace(c.Query("status")), page, size)
-	if err != nil {
-		h.handleErr(c, err)
-		return
-	}
-	response.JSON(c, http.StatusOK, response.ListEnvelope[CourseAssignment]{Items: items, Page: page, PageSize: size, Total: total})
-}
-
-func (h *Handler) ListCompletedCourses(c *gin.Context) {
-	user, ok := middleware.CurrentUser(c)
-	if !ok {
-		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-	page := parseIntDefault(c.Query("page"), 1)
-	size := parseIntDefault(c.Query("page_size"), 20)
-	items, total, err := h.service.ListCompletedCourses(c.Request.Context(), user.UserID, user.PrimaryRole(), page, size)
-	if err != nil {
-		h.handleErr(c, err)
-		return
-	}
-	response.JSON(c, http.StatusOK, response.ListEnvelope[CourseAssignment]{Items: items, Page: page, PageSize: size, Total: total})
-}
-
 func (h *Handler) GetMyAssignment(c *gin.Context) {
 	user, ok := middleware.CurrentUser(c)
 	if !ok {
@@ -370,20 +389,6 @@ func (h *Handler) GetMyAssignment(c *gin.Context) {
 		return
 	}
 	item, err := h.service.GetMyAssignmentByID(c.Request.Context(), c.Param("id"), user.UserID, user.PrimaryRole())
-	if err != nil {
-		h.handleErr(c, err)
-		return
-	}
-	response.JSON(c, http.StatusOK, item)
-}
-
-func (h *Handler) GetMyCourse(c *gin.Context) {
-	user, ok := middleware.CurrentUser(c)
-	if !ok {
-		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-	item, err := h.service.GetMyCourse(c.Request.Context(), c.Param("id"), user.UserID, user.PrimaryRole())
 	if err != nil {
 		h.handleErr(c, err)
 		return

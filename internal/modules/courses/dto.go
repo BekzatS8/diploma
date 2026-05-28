@@ -67,11 +67,16 @@ type UpdateMaterialRequest struct {
 }
 
 type ListCoursesQuery struct {
-	Status   string
-	Category string
-	Search   string
-	Page     int
-	PageSize int
+	Status           string
+	ModerationStatus string
+	Category         string
+	Search           string
+	Page             int
+	PageSize         int
+}
+
+type RejectCourseRequest struct {
+	Reason *string `json:"reason" binding:"omitempty,max=1000"`
 }
 
 type CourseDetailResponse struct {
