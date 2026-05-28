@@ -80,13 +80,6 @@ func (r *Repository) GetByRole(ctx context.Context, userID, role string) (map[st
 		base["address"] = address
 		base["website"] = website
 		base["avatar_upload_id"] = avatarUploadID
-		var ratingAvg float64 = 5
-		var ratingCount int
-		var completedOrders int
-		_ = r.db.QueryRow(ctx, `SELECT COALESCE(rating_avg::float8,5), rating_count, completed_orders FROM client_profiles WHERE user_id=$1`, userID).Scan(&ratingAvg, &ratingCount, &completedOrders)
-		base["rating_avg"] = ratingAvg
-		base["rating_count"] = ratingCount
-		base["completed_orders"] = completedOrders
 		return base, nil
 	case "executor":
 		var displayName, bio, firstName, lastName, middleName, iin, phone, city, experienceLevel, education, workFormat, about, verificationStatus, rejectionReason, website *string
@@ -329,31 +322,12 @@ func (r *Repository) GetStats(ctx context.Context, userID, role string) (Profile
 		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE client_id=$1 AND deleted_at IS NULL AND status IN ('published','in_progress','payment_pending')`, userID).Scan(&stats.OrdersActive)
 		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE client_id=$1 AND deleted_at IS NULL AND status='completed'`, userID).Scan(&stats.OrdersCompleted)
 		_ = r.db.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0)::float8 FROM wallet_transactions WHERE user_id=$1 AND direction='debit'`, userID).Scan(&stats.SpentTotal)
-		_ = r.db.QueryRow(ctx, `SELECT COALESCE(rating_avg::float8,5), rating_count FROM client_profiles WHERE user_id=$1`, userID).Scan(&stats.RatingAvg, &stats.RatingCount)
 	case "executor":
 		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE selected_executor_id=$1 AND deleted_at IS NULL`, userID).Scan(&stats.OrdersTotal)
 		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE selected_executor_id=$1 AND deleted_at IS NULL AND status='in_progress'`, userID).Scan(&stats.OrdersActive)
 		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE selected_executor_id=$1 AND deleted_at IS NULL AND status='completed'`, userID).Scan(&stats.OrdersCompleted)
 		_ = r.db.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0)::float8 FROM wallet_transactions WHERE user_id=$1 AND direction='credit' AND reason='order_completed'`, userID).Scan(&stats.EarnedTotal)
-		_ = r.db.QueryRow(ctx, `SELECT COALESCE(rating_avg::float8,5), rating_count, profile_views, response_rate FROM executor_profiles WHERE user_id=$1`, userID).Scan(&stats.RatingAvg, &stats.RatingCount, &stats.ProfileViews, &stats.ResponseRate)
-		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM courses WHERE created_by=$1 AND status='published' AND deleted_at IS NULL`, userID).Scan(&stats.CoursesPublished)
-		_ = r.db.QueryRow(ctx, `
-			SELECT COUNT(DISTINCT ca.executor_id)
-			FROM course_assignments ca
-			JOIN courses c ON c.id=ca.course_id
-			WHERE c.created_by=$1 AND c.deleted_at IS NULL
-		`, userID).Scan(&stats.CourseStudents)
-	case "coach":
-		_ = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM courses WHERE created_by=$1 AND status='published' AND deleted_at IS NULL`, userID).Scan(&stats.CoursesPublished)
-		_ = r.db.QueryRow(ctx, `
-			SELECT COUNT(DISTINCT ca.executor_id)
-			FROM course_assignments ca
-			JOIN courses c ON c.id=ca.course_id
-			WHERE c.created_by=$1 AND c.deleted_at IS NULL
-		`, userID).Scan(&stats.CourseStudents)
-	}
-	if stats.RatingAvg == 0 && stats.RatingCount == 0 {
-		stats.RatingAvg = 5
+		_ = r.db.QueryRow(ctx, `SELECT rating_avg::float8, rating_count, profile_views, response_rate FROM executor_profiles WHERE user_id=$1`, userID).Scan(&stats.RatingAvg, &stats.RatingCount, &stats.ProfileViews, &stats.ResponseRate)
 	}
 	return stats, nil
 }

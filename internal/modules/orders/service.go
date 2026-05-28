@@ -260,6 +260,9 @@ func (s *Service) GetByID(ctx context.Context, id string, userID string, role st
 	if role == "admin" {
 		return order, nil
 	}
+	if role == "executor" && userID != "" && order.SelectedExecutorID != nil && *order.SelectedExecutorID == userID {
+		return order, nil
+	}
 	if role == "client" && userID != "" && order.ClientID == userID {
 		return order, nil
 	}

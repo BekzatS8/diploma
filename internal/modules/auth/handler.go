@@ -145,13 +145,80 @@ func (h *Handler) Me(c *gin.Context) {
 		return
 	}
 
+	isCoach, err := h.service.IsCoachCapability(c.Request.Context(), user.ID, user.Role)
+	if err != nil {
+		response.JSONError(c, http.StatusInternalServerError, "internal_error", "Failed to load user capabilities")
+		return
+	}
+
 	response.JSON(c, http.StatusOK, gin.H{
 		"id":                  user.ID,
 		"email":               user.Email,
 		"role":                user.Role,
+		"is_coach":            isCoach,
 		"verification_status": user.VerificationStatus,
 		"profile":             profile,
 	})
+}
+
+func (h *Handler) ForgotPassword(c *gin.Context) {
+	var req ForgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
+		return
+	}
+
+	resp, err := h.service.RequestPasswordReset(c.Request.Context(), req.Email)
+	if err != nil {
+		h.handleAuthError(c, err)
+		return
+	}
+
+	response.JSON(c, http.StatusOK, resp)
+}
+
+func (h *Handler) ResetPassword(c *gin.Context) {
+	var req ResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
+		return
+	}
+
+	if err := h.service.ResetPasswordWithToken(c.Request.Context(), req.Token, req.NewPassword); err != nil {
+		h.handleAuthError(c, err)
+		return
+	}
+
+	response.JSON(c, http.StatusOK, gin.H{
+		"status":  "password_reset",
+		"message": "Пароль успешно обновлён",
+	})
+}
+
+func (h *Handler) ChangePassword(c *gin.Context) {
+	userCtx, ok := middleware.CurrentUser(c)
+	if !ok {
+		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	var req ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.JSONError(c, http.StatusBadRequest, "bad_request", "Invalid request payload")
+		return
+	}
+
+	if err := h.service.ChangePassword(
+		c.Request.Context(),
+		userCtx.UserID,
+		req.CurrentPassword,
+		req.NewPassword,
+	); err != nil {
+		h.handleAuthError(c, err)
+		return
+	}
+
+	response.JSON(c, http.StatusOK, gin.H{"status": "password_updated"})
 }
 
 func (h *Handler) handleAuthError(c *gin.Context, err error) {
@@ -164,6 +231,12 @@ func (h *Handler) handleAuthError(c *gin.Context, err error) {
 		response.JSONError(c, http.StatusBadRequest, "executor_lead_required", "Executor registration requires document lead verification")
 	case errors.Is(err, ErrInvalidCredentials):
 		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Invalid email or password")
+	case errors.Is(err, ErrWrongCurrentPassword):
+		response.JSONError(c, http.StatusBadRequest, "wrong_password", "Current password is incorrect")
+	case errors.Is(err, ErrSamePassword):
+		response.JSONError(c, http.StatusBadRequest, "same_password", "New password must differ from the current password")
+	case errors.Is(err, ErrInvalidResetToken):
+		response.JSONError(c, http.StatusBadRequest, "invalid_reset_token", "Invalid or expired password reset link")
 	case errors.Is(err, ErrUnauthorized):
 		response.JSONError(c, http.StatusUnauthorized, "unauthorized", "Unauthorized")
 	default:

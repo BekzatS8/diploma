@@ -11,6 +11,7 @@ import (
 type Claims struct {
 	UserID    string `json:"uid"`
 	Role      string `json:"role"`
+	IsCoach   bool   `json:"is_coach,omitempty"`
 	TokenType string `json:"token_type"`
 	jwt.RegisteredClaims
 }
@@ -33,10 +34,11 @@ func NewJWTManager(issuer, accessSecret, refreshSecret string, accessTTL, refres
 	}
 }
 
-func (m *JWTManager) GenerateAccessToken(userID, role string) (string, error) {
+func (m *JWTManager) GenerateAccessToken(userID, role string, isCoach bool) (string, error) {
 	claims := Claims{
 		UserID:    userID,
 		Role:      role,
+		IsCoach:   isCoach,
 		TokenType: "access",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    m.issuer,
@@ -49,10 +51,11 @@ func (m *JWTManager) GenerateAccessToken(userID, role string) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(m.accessSecret)
 }
 
-func (m *JWTManager) GenerateRefreshToken(userID, role, tokenID string) (string, error) {
+func (m *JWTManager) GenerateRefreshToken(userID, role, tokenID string, isCoach bool) (string, error) {
 	claims := Claims{
 		UserID:    userID,
 		Role:      role,
+		IsCoach:   isCoach,
 		TokenType: "refresh",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    m.issuer,

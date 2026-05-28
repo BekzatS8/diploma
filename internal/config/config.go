@@ -21,13 +21,15 @@ type Config struct {
 	Sanctions SanctionsConfig
 	Courses   CoursesConfig
 	Bootstrap BootstrapConfig
+	Mail      MailConfig
 }
 
 type AppConfig struct {
-	Name        string
-	Env         string
-	LogLevel    string
-	AutoMigrate bool
+	Name            string
+	Env             string
+	LogLevel        string
+	AutoMigrate     bool
+	FrontendBaseURL string
 }
 
 type ServerConfig struct {
@@ -90,6 +92,18 @@ type BootstrapConfig struct {
 	AdminPassword string
 }
 
+// MailConfig configures outbound SMTP (password reset and other transactional mail).
+type MailConfig struct {
+	Host        string
+	Port        int
+	User        string
+	Password    string
+	From        string
+	FromName    string
+	ImplicitTLS bool // true for port 465 (SMTPS)
+	StartTLS    bool // true for port 587 (default when ImplicitTLS is false)
+}
+
 type MetricsConfig struct {
 	Enabled bool
 	Path    string
@@ -113,10 +127,11 @@ type CoursesConfig struct {
 func Load() (Config, error) {
 	cfg := Config{
 		App: AppConfig{
-			Name:        getEnv("APP_NAME", "buhpro-api"),
-			Env:         getEnv("APP_ENV", "development"),
-			LogLevel:    getEnv("LOG_LEVEL", "info"),
-			AutoMigrate: getEnvAsBool("AUTO_MIGRATE", true),
+			Name:            getEnv("APP_NAME", "buhpro-api"),
+			Env:             getEnv("APP_ENV", "development"),
+			LogLevel:        getEnv("LOG_LEVEL", "info"),
+			AutoMigrate:     getEnvAsBool("AUTO_MIGRATE", true),
+			FrontendBaseURL: strings.TrimRight(getEnv("FRONTEND_URL", "http://localhost:3000"), "/"),
 		},
 		Server: ServerConfig{
 			Host:            getEnv("HTTP_HOST", "0.0.0.0"),
@@ -187,7 +202,29 @@ func Load() (Config, error) {
 			AdminEmail:    getEnv("BOOTSTRAP_ADMIN_EMAIL", ""),
 			AdminPassword: getEnv("BOOTSTRAP_ADMIN_PASSWORD", ""),
 		},
+		Mail: loadMailConfig(),
 	}
+
+	return validateConfig(cfg)
+}
+
+func loadMailConfig() MailConfig {
+	port := getEnvAsInt("SMTP_PORT", 587)
+	implicitTLS := getEnvAsBool("SMTP_IMPLICIT_TLS", port == 465)
+	startTLS := getEnvAsBool("SMTP_STARTTLS", !implicitTLS)
+	return MailConfig{
+		Host:        getEnv("SMTP_HOST", ""),
+		Port:        port,
+		User:        getEnv("SMTP_USER", ""),
+		Password:    os.Getenv("SMTP_PASSWORD"),
+		From:        getEnv("SMTP_FROM", ""),
+		FromName:    getEnv("SMTP_FROM_NAME", "BuhPro"),
+		ImplicitTLS: implicitTLS,
+		StartTLS:    startTLS,
+	}
+}
+
+func validateConfig(cfg Config) (Config, error) {
 
 	missing := make([]string, 0, 3)
 	if cfg.DB.URL == "" {

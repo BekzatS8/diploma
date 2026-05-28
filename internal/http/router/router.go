@@ -9,6 +9,7 @@ import (
 	"buhpro/internal/http/handlers/system"
 	"buhpro/internal/http/middleware"
 	"buhpro/internal/http/swagger"
+	adminusersmodule "buhpro/internal/modules/adminusers"
 	attachmentsmodule "buhpro/internal/modules/attachments"
 	authmodule "buhpro/internal/modules/auth"
 	chatsmodule "buhpro/internal/modules/chats"
@@ -16,6 +17,7 @@ import (
 	devpaymentsmodule "buhpro/internal/modules/devpayments"
 	leadsmodule "buhpro/internal/modules/leads"
 	notificationsmodule "buhpro/internal/modules/notifications"
+	orderreportsmodule "buhpro/internal/modules/orderreports"
 	ordersmodule "buhpro/internal/modules/orders"
 	paymentmodule "buhpro/internal/modules/payment"
 	profilemodule "buhpro/internal/modules/profile"
@@ -39,6 +41,7 @@ type Deps struct {
 	AuthHandler          *authmodule.Handler
 	ProfileHandler       *profilemodule.Handler
 	OrdersHandler        *ordersmodule.Handler
+	OrderReportsHandler  *orderreportsmodule.Handler
 	ResponsesHandler     *responsesmodule.Handler
 	PaymentHandler       *paymentmodule.Handler
 	DevPaymentsHandler   *devpaymentsmodule.Handler
@@ -52,6 +55,7 @@ type Deps struct {
 	AttachmentsHandler   *attachmentsmodule.Handler
 	LeadsHandler         *leadsmodule.Handler
 	WalletsHandler       *walletsmodule.Handler
+	AdminUsersHandler    *adminusersmodule.Handler
 	Metrics              *metrics.Metrics
 }
 
@@ -96,6 +100,8 @@ func New(deps Deps) *gin.Engine {
 			authGroup.POST("/register", deps.AuthHandler.Register)
 			authGroup.POST("/login", deps.AuthHandler.Login)
 			authGroup.POST("/refresh", deps.AuthHandler.Refresh)
+			authGroup.POST("/forgot-password", deps.AuthHandler.ForgotPassword)
+			authGroup.POST("/reset-password", deps.AuthHandler.ResetPassword)
 			authGroup.Use(middleware.RequireAuth(deps.JWTManager))
 			authGroup.POST("/logout", deps.AuthHandler.Logout)
 			authGroup.GET("/me", deps.AuthHandler.Me)
@@ -107,6 +113,7 @@ func New(deps Deps) *gin.Engine {
 		profileGroup.PATCH("", deps.ProfileHandler.Patch)
 		profileGroup.PATCH("/avatar", deps.ProfileHandler.SetAvatar)
 		profileGroup.DELETE("/avatar", deps.ProfileHandler.ClearAvatar)
+		profileGroup.PATCH("/password", deps.AuthHandler.ChangePassword)
 
 		filesGroup := v1.Group("/files")
 		filesGroup.Use(middleware.RequireAuth(deps.JWTManager))
@@ -158,6 +165,18 @@ func New(deps Deps) *gin.Engine {
 		adminLeadsGroup.POST("/:id/approve", deps.LeadsHandler.Approve)
 		adminLeadsGroup.POST("/:id/reject", deps.LeadsHandler.Reject)
 
+		adminUsersGroup := v1.Group("/admin/users")
+		adminUsersGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
+		adminUsersGroup.GET("/executors", deps.AdminUsersHandler.ListExecutors)
+		adminUsersGroup.POST("/:userId/promote-coach", deps.AdminUsersHandler.PromoteToCoach)
+		adminUsersGroup.POST("/:userId/revoke-coach", deps.AdminUsersHandler.RevokeCoach)
+
+		adminOrderReportsGroup := v1.Group("/admin/order-reports")
+		adminOrderReportsGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("admin"))
+		adminOrderReportsGroup.GET("", deps.OrderReportsHandler.List)
+		adminOrderReportsGroup.POST("/:id/dismiss", deps.OrderReportsHandler.Dismiss)
+		adminOrderReportsGroup.POST("/:id/remove-order", deps.OrderReportsHandler.RemoveOrder)
+
 		ordersGroup := v1.Group("/orders")
 		ordersGroup.Use(middleware.OptionalAuth(deps.JWTManager))
 		ordersGroup.GET("", deps.OrdersHandler.ListPublic)
@@ -184,6 +203,10 @@ func New(deps Deps) *gin.Engine {
 		orderResponsesGroup.DELETE("/my/:responseId", deps.ResponsesHandler.DeleteOrderMyByID)
 		orderResponsesGroup.POST("/my/:responseId/submit", deps.ResponsesHandler.Submit)
 		orderResponsesGroup.POST("/my/:responseId/cancel", deps.ResponsesHandler.Cancel)
+
+		executorOrderReportsGroup := v1.Group("/executor/orders")
+		executorOrderReportsGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor", "admin"))
+		executorOrderReportsGroup.POST("/:id/report", deps.OrderReportsHandler.Create)
 
 		myResponsesGroup := v1.Group("/my/responses")
 		myResponsesGroup.Use(middleware.RequireAuth(deps.JWTManager), middleware.RequireRoles("executor", "admin"))

@@ -47,7 +47,7 @@ func OptionalAuth(jwtManager *auth.JWTManager) gin.HandlerFunc {
 			return
 		}
 
-		c.Set("auth_user", UserContext{UserID: claims.UserID, Roles: []string{claims.Role}})
+		c.Set("auth_user", userContextFromClaims(claims))
 		c.Next()
 	}
 }
@@ -66,9 +66,17 @@ func RequireAuth(jwtManager *auth.JWTManager) gin.HandlerFunc {
 			return
 		}
 
-		c.Set("auth_user", UserContext{UserID: claims.UserID, Roles: []string{claims.Role}})
+		c.Set("auth_user", userContextFromClaims(claims))
 		c.Next()
 	}
+}
+
+func userContextFromClaims(claims *auth.Claims) UserContext {
+	roles := []string{claims.Role}
+	if claims.IsCoach && claims.Role != "coach" {
+		roles = append(roles, "coach")
+	}
+	return UserContext{UserID: claims.UserID, Roles: roles}
 }
 
 func RequireRoles(allowed ...string) gin.HandlerFunc {

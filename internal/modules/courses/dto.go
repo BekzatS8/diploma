@@ -45,7 +45,7 @@ type CreateMaterialRequest struct {
 	Description     *string        `json:"description" binding:"omitempty,max=1000"`
 	Type            string         `json:"type" binding:"required,oneof=video pdf link text"`
 	UploadID        *string        `json:"upload_id" binding:"omitempty,uuid"`
-	URL             *string        `json:"url" binding:"omitempty,url,max=2048"`
+	URL             *string        `json:"url" binding:"omitempty,max=2048"`
 	Content         *string        `json:"content" binding:"omitempty,max=20000"`
 	Position        *int           `json:"position" binding:"omitempty,gte=0"`
 	DurationSeconds *int           `json:"duration_seconds" binding:"omitempty,gte=0"`
@@ -58,7 +58,7 @@ type UpdateMaterialRequest struct {
 	Description     *string        `json:"description" binding:"omitempty,max=1000"`
 	Type            *string        `json:"type" binding:"omitempty,oneof=video pdf link text"`
 	UploadID        *string        `json:"upload_id" binding:"omitempty,uuid"`
-	URL             *string        `json:"url" binding:"omitempty,url,max=2048"`
+	URL             *string        `json:"url" binding:"omitempty,max=2048"`
 	Content         *string        `json:"content" binding:"omitempty,max=20000"`
 	Position        *int           `json:"position" binding:"omitempty,gte=0"`
 	DurationSeconds *int           `json:"duration_seconds" binding:"omitempty,gte=0"`
@@ -82,20 +82,6 @@ type RejectCourseRequest struct {
 type CourseDetailResponse struct {
 	Course    Course           `json:"course"`
 	Materials []CourseMaterial `json:"materials"`
-	Lessons   []CourseLesson   `json:"lessons"`
-}
-
-type CourseLesson struct {
-	Key       string           `json:"key"`
-	Title     string           `json:"title"`
-	Position  int              `json:"position"`
-	Materials []CourseMaterial `json:"materials"`
-}
-
-type CourseLearningResponse struct {
-	Assignment CourseAssignment `json:"assignment"`
-	Materials  []CourseMaterial `json:"materials"`
-	Lessons    []CourseLesson   `json:"lessons"`
 }
 
 type CreateAssignmentRequest struct {

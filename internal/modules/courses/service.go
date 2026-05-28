@@ -592,6 +592,13 @@ func (s *Service) canCreateCourse(ctx context.Context, userID, role string) (boo
 	case "coach", "admin":
 		return true, nil
 	case "executor":
+		hasCoach, err := s.repo.HasCoachProfile(ctx, userID)
+		if err != nil {
+			return false, err
+		}
+		if hasCoach {
+			return true, nil
+		}
 		avg, count, err := s.repo.ExecutorRating(ctx, userID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

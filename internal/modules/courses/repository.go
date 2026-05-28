@@ -577,6 +577,12 @@ func (r *Repository) IsCoursePublished(ctx context.Context, courseID string) (bo
 	return exists, err
 }
 
+func (r *Repository) HasCoachProfile(ctx context.Context, userID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM coach_profiles WHERE user_id=$1)`, userID).Scan(&exists)
+	return exists, err
+}
+
 func (r *Repository) ExecutorRating(ctx context.Context, executorID string) (float64, int, error) {
 	var avg float64
 	var count int

@@ -190,40 +190,12 @@ func achievementsFor(role string, stats ProfileStats) []ProfileAchievement {
 				Description: "Response rate is 80% or higher.",
 			})
 		}
-		if stats.RatingAvg >= 5 && stats.RatingCount >= 5 {
-			items = append(items, ProfileAchievement{
-				Code:        "trusted_expert",
-				Title:       "Trusted expert",
-				Description: "At least five completed-order reviews with a 5.0 rating.",
-			})
-		}
-		if stats.CoursesPublished > 0 {
-			items = append(items, ProfileAchievement{
-				Code:        "course_creator",
-				Title:       "Course creator",
-				Description: "Published at least one educational course.",
-			})
-		}
 	}
 	if role == "client" && stats.SpentTotal > 0 {
 		items = append(items, ProfileAchievement{
 			Code:        "active_customer",
 			Title:       "Active customer",
 			Description: "Has paid for order placement or escrow.",
-		})
-	}
-	if role == "client" && stats.RatingAvg >= 5 && stats.RatingCount >= 5 {
-		items = append(items, ProfileAchievement{
-			Code:        "trusted_customer",
-			Title:       "Trusted customer",
-			Description: "Has five or more 5.0 reviews from contractors.",
-		})
-	}
-	if (role == "coach" || role == "executor") && stats.CourseStudents >= 5 {
-		items = append(items, ProfileAchievement{
-			Code:        "mentor",
-			Title:       "Mentor",
-			Description: "Has five or more course students.",
 		})
 	}
 	return items

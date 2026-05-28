@@ -1,0 +1,1 @@
+-- No safe automatic rollback for role restoration.

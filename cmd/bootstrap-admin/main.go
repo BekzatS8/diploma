@@ -30,7 +30,12 @@ func main() {
 	defer pool.Close()
 
 	jwtManager := commonauth.NewJWTManager(cfg.JWT.Issuer, cfg.JWT.AccessSecretKey, cfg.JWT.RefreshSecretKey, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
-	service := authmodule.NewService(authmodule.NewRepository(pool), jwtManager)
+	service := authmodule.NewService(
+		authmodule.NewRepository(pool),
+		jwtManager,
+		authmodule.PasswordResetConfig{},
+		nil,
+	)
 
 	if err := service.BootstrapAdmin(ctx, cfg.Bootstrap.AdminEmail, cfg.Bootstrap.AdminPassword); err != nil {
 		log.Fatalf("bootstrap admin: %v", err)

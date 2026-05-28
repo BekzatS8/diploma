@@ -113,7 +113,25 @@ func (r *Repository) List(ctx context.Context, status Status, page, pageSize int
 		}
 		items = append(items, item)
 	}
-	return items, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	if len(items) > 0 {
+		leadIDs := make([]string, len(items))
+		for i := range items {
+			leadIDs[i] = items[i].ID
+		}
+		docsByLead, err := r.listDocumentsByLeadIDs(ctx, leadIDs)
+		if err != nil {
+			return nil, 0, err
+		}
+		for i := range items {
+			items[i].Documents = docsByLead[items[i].ID]
+		}
+	}
+
+	return items, total, nil
 }
 
 func (r *Repository) GetByID(ctx context.Context, id string) (ExecutorLead, error) {
@@ -127,6 +145,33 @@ func (r *Repository) GetByID(ctx context.Context, id string) (ExecutorLead, erro
 	}
 	item.Documents = docs
 	return item, nil
+}
+
+func (r *Repository) listDocumentsByLeadIDs(ctx context.Context, leadIDs []string) (map[string][]ExecutorLeadDocument, error) {
+	result := make(map[string][]ExecutorLeadDocument, len(leadIDs))
+	if len(leadIDs) == 0 {
+		return result, nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT id, lead_id, document_type, file_path, original_name, mime_type, size_bytes, created_at
+		FROM executor_lead_documents
+		WHERE lead_id = ANY($1::uuid[])
+		ORDER BY created_at ASC
+	`, leadIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		doc, err := scanDocument(rows)
+		if err != nil {
+			return nil, err
+		}
+		result[doc.LeadID] = append(result[doc.LeadID], doc)
+	}
+	return result, rows.Err()
 }
 
 func (r *Repository) ListDocuments(ctx context.Context, leadID string) ([]ExecutorLeadDocument, error) {

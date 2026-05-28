@@ -15,13 +15,16 @@ import (
 	"buhpro/internal/config"
 	"buhpro/internal/http/handlers/system"
 	"buhpro/internal/http/router"
+	adminusersmodule "buhpro/internal/modules/adminusers"
 	attachmentsmodule "buhpro/internal/modules/attachments"
 	authmodule "buhpro/internal/modules/auth"
+	"buhpro/internal/platform/mail"
 	chatsmodule "buhpro/internal/modules/chats"
 	coursesmodule "buhpro/internal/modules/courses"
 	devpaymentsmodule "buhpro/internal/modules/devpayments"
 	leadsmodule "buhpro/internal/modules/leads"
 	notificationsmodule "buhpro/internal/modules/notifications"
+	orderreportsmodule "buhpro/internal/modules/orderreports"
 	ordersmodule "buhpro/internal/modules/orders"
 	paymentmodule "buhpro/internal/modules/payment"
 	profilemodule "buhpro/internal/modules/profile"
@@ -96,7 +99,18 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	}
 
 	authRepo := authmodule.NewRepository(dbPool)
-	authService := authmodule.NewService(authRepo, jwtManager)
+	mailSender := mail.NewFromConfig(cfg.Mail)
+	if mailSender.Enabled() {
+		log.Info("smtp mail enabled", "host", cfg.Mail.Host, "port", cfg.Mail.Port, "from", cfg.Mail.From)
+	} else {
+		log.Warn("smtp not configured: password reset links are only shown in API response when APP_ENV is not production")
+	}
+
+	authService := authmodule.NewService(authRepo, jwtManager, authmodule.PasswordResetConfig{
+		FrontendBaseURL: cfg.App.FrontendBaseURL,
+		AppName:         cfg.App.Name,
+		IsProduction:    cfg.App.Env == "production",
+	}, mailSender)
 	uploadsRepo := uploadsmodule.NewRepository(dbPool)
 	uploadsService := uploadsmodule.NewService(uploadsRepo, storageProvider)
 	profileRepo := profilemodule.NewRepository(dbPool)
@@ -131,6 +145,8 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	attachmentsService := attachmentsmodule.NewService(attachmentsRepo, uploadsService)
 	leadsRepo := leadsmodule.NewRepository(dbPool)
 	leadsService := leadsmodule.NewService(leadsRepo, storageProvider)
+	adminUsersRepo := adminusersmodule.NewRepository(dbPool)
+	adminUsersService := adminusersmodule.NewService(adminUsersRepo)
 	walletsRepo := walletsmodule.NewRepository(dbPool)
 	walletsService := walletsmodule.NewService(walletsRepo, cfg.Orders.DefaultCurrency)
 
@@ -144,6 +160,9 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	authHandler := authmodule.NewHandler(authService, profileService)
 	profileHandler := profilemodule.NewHandler(profileService)
 	ordersHandler := ordersmodule.NewHandler(ordersService)
+	orderReportsRepo := orderreportsmodule.NewRepository(dbPool)
+	orderReportsService := orderreportsmodule.NewService(orderReportsRepo)
+	orderReportsHandler := orderreportsmodule.NewHandler(orderReportsService)
 	responsesHandler := responsesmodule.NewHandler(responsesService)
 	devPaymentsHandler := devpaymentsmodule.NewHandler(devPaymentsService)
 	paymentHandler := paymentmodule.NewHandler(paymentService)
@@ -156,6 +175,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	uploadsHandler := uploadsmodule.NewHandler(uploadsService)
 	attachmentsHandler := attachmentsmodule.NewHandler(attachmentsService)
 	leadsHandler := leadsmodule.NewHandler(leadsService)
+	adminUsersHandler := adminusersmodule.NewHandler(adminUsersService)
 	walletsHandler := walletsmodule.NewHandler(walletsService)
 
 	metricsCollector := metrics.New()
@@ -169,6 +189,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 		AuthHandler:          authHandler,
 		ProfileHandler:       profileHandler,
 		OrdersHandler:        ordersHandler,
+		OrderReportsHandler:  orderReportsHandler,
 		ResponsesHandler:     responsesHandler,
 		PaymentHandler:       paymentHandler,
 		DevPaymentsHandler:   devPaymentsHandler,
@@ -182,6 +203,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 		AttachmentsHandler:   attachmentsHandler,
 		LeadsHandler:         leadsHandler,
 		WalletsHandler:       walletsHandler,
+		AdminUsersHandler:    adminUsersHandler,
 		Metrics:              metricsCollector,
 	})
 

@@ -6,5 +6,5 @@ ALTER TABLE course_assignments
         'manual_admin',
         'sanction_low_rating_first',
         'sanction_low_rating_repeat',
-        'self_enrolled'
+        'self_enroll'
     ));

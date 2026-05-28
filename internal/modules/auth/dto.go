@@ -38,6 +38,27 @@ type LogoutRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required"`
+	NewPassword     string `json:"new_password" binding:"required"`
+}
+
+type ForgotPasswordRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+type ForgotPasswordResponse struct {
+	Message        string `json:"message"`
+	ResetURL       string `json:"reset_url,omitempty"`
+	EmailSent      bool   `json:"email_sent,omitempty"`
+	MailConfigured bool   `json:"mail_configured,omitempty"`
+}
+
+type ResetPasswordRequest struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required"`
+}
+
 type AuthResponse struct {
 	UserID             string `json:"user_id"`
 	Email              string `json:"email"`

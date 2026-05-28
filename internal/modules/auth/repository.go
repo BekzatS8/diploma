@@ -111,6 +111,12 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, er
 	return u, nil
 }
 
+func (r *Repository) HasCoachProfile(ctx context.Context, userID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM coach_profiles WHERE user_id = $1)`, userID).Scan(&exists)
+	return exists, err
+}
+
 func (r *Repository) GetUserByID(ctx context.Context, userID string) (User, error) {
 	var u User
 	err := r.db.QueryRow(ctx, `
@@ -218,4 +224,75 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (r *Repository) UpdatePasswordHash(ctx context.Context, userID, passwordHash string) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1
+	`, userID, passwordHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUnauthorized
+	}
+	return nil
+}
+
+func (r *Repository) ReplacePasswordResetToken(
+	ctx context.Context,
+	userID, tokenHash string,
+	expiresAt time.Time,
+) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE password_reset_tokens SET used_at = NOW()
+		WHERE user_id = $1 AND used_at IS NULL
+	`, userID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)
+	`, userID, tokenHash, expiresAt); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (r *Repository) GetActivePasswordReset(ctx context.Context, tokenHash string) (userID, tokenID string, err error) {
+	err = r.db.QueryRow(ctx, `
+		SELECT user_id::text, id::text
+		FROM password_reset_tokens
+		WHERE token_hash = $1
+		  AND used_at IS NULL
+		  AND expires_at > NOW()
+	`, tokenHash).Scan(&userID, &tokenID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", pgx.ErrNoRows
+		}
+		return "", "", err
+	}
+	return userID, tokenID, nil
+}
+
+func (r *Repository) MarkPasswordResetUsed(ctx context.Context, tokenID string) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1 AND used_at IS NULL
+	`, tokenID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
